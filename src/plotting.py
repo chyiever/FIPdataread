@@ -32,6 +32,45 @@ class AbsoluteTimeAxis(pg.AxisItem):
         return labels
 
 
+class LogFrequencyAxis(pg.AxisItem):
+    def __init__(self, orientation: str = "left") -> None:
+        super().__init__(orientation=orientation)
+        self.setStyle(tickFont=QtGui.QFont("Times New Roman", 11), tickTextOffset=8)
+        self.setPen(pg.mkPen("k"))
+        self.setTextPen(pg.mkPen("k"))
+
+    def tickStrings(self, values, scale, spacing):
+        labels: list[str] = []
+        for value in values:
+            frequency = 10.0 ** float(value)
+            if frequency >= 10000:
+                labels.append(f"{frequency:.0f}")
+            elif frequency >= 1000:
+                labels.append(f"{frequency:.1f}")
+            elif frequency >= 10:
+                labels.append(f"{frequency:.0f}")
+            else:
+                labels.append(f"{frequency:.2f}")
+        return labels
+
+
+def create_colormap(name: str) -> pg.ColorMap:
+    cmap_name = str(name).strip()
+    if not cmap_name:
+        cmap_name = "jet"
+    try:
+        return pg.colormap.get(cmap_name, source="matplotlib")
+    except Exception:
+        pass
+    try:
+        return pg.colormap.get(cmap_name)
+    except Exception:
+        try:
+            return pg.colormap.get("jet", source="matplotlib")
+        except Exception:
+            return pg.colormap.get("CET-L4")
+
+
 def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_label: str) -> None:
     axis_color = "#4B5563"
     text_color = "#1F2937"

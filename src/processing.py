@@ -110,6 +110,73 @@ def compute_window_psd(values: np.ndarray, sample_rate: float) -> tuple[np.ndarr
     return freqs, psd_db
 
 
+def compute_time_frequency_map(
+    values: np.ndarray,
+    sample_rate: float,
+    *,
+    window_seconds: float,
+    overlap_ratio: float,
+    spectrum_mode: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    signal = np.asarray(values, dtype=np.float64).reshape(-1)
+    if signal.size < 8 or sample_rate <= 0.0:
+        return (
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+
+    window_samples = max(8, int(round(float(window_seconds) * float(sample_rate))))
+    window_samples = min(window_samples, signal.size)
+    if window_samples < 8:
+        return (
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+            np.array([], dtype=np.float64),
+        )
+
+    overlap = min(max(float(overlap_ratio), 0.0), 0.95)
+    noverlap = min(window_samples - 1, max(0, int(round(window_samples * overlap))))
+    mode = str(spectrum_mode).strip().lower()
+    if mode == "psd":
+        freqs, times, psd = scipy_signal.spectrogram(
+            signal,
+            fs=float(sample_rate),
+            window="hann",
+            nperseg=window_samples,
+            noverlap=noverlap,
+            detrend=False,
+            scaling="density",
+            return_onesided=True,
+            mode="psd",
+        )
+        return (
+            np.asarray(freqs, dtype=np.float64),
+            np.asarray(times, dtype=np.float64) * float(sample_rate),
+            np.asarray(psd, dtype=np.float64),
+        )
+
+    if mode == "amplitude":
+        freqs, times, amplitude = scipy_signal.spectrogram(
+            signal,
+            fs=float(sample_rate),
+            window="hann",
+            nperseg=window_samples,
+            noverlap=noverlap,
+            detrend=False,
+            scaling="spectrum",
+            return_onesided=True,
+            mode="magnitude",
+        )
+        return (
+            np.asarray(freqs, dtype=np.float64),
+            np.asarray(times, dtype=np.float64) * float(sample_rate),
+            np.asarray(amplitude, dtype=np.float64),
+        )
+
+    raise ValueError(f"Unsupported time-frequency mode: {spectrum_mode}")
+
+
 def prepare_audio_waveform(
     values: np.ndarray,
     sample_rate: float,

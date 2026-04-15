@@ -29,3 +29,20 @@ Purpose: keep a simple long-term update log for this project.
 - Standardized button visual feedback and set all button text to bold.
 - Updated visible-time precision to 3 decimal places for label and input consistency.
 - Problem solved: improved readability, clearer module separation, and more consistent interaction feedback.
+
+## 2026-04-15 15:40
+- Refactored the lower-right plotting area into analysis tabs:
+  - `1D Curve` now contains previous Plot 2 + Plot 3.
+  - Added `t-f Plot` for short-time time-frequency visualization.
+- Added dedicated t-f controls in `Display Controls`:
+  - Mode (`PSD` / `Amplitude`)
+  - Value scale (`Log` / `Linear`)
+  - Window length (default `0.005 s`) and overlap (default `50%`)
+  - t-f Y range, colormap, and color level auto/manual controls
+- Implemented short-time t-f computation pipeline in `processing.py`:
+  - `PSD` path via `welch`
+  - `Amplitude` path via one-sided FFT
+- Implemented pyqtgraph-based rendering (`ImageItem + HistogramLUTWidget`) with log-frequency axis.
+- Added two-way X-axis synchronization between time-domain plot and t-f plot.
+- Updated tab selected-state styling to clearly differentiate active tab text/background.
+- Problem solved: one app view now supports both legacy 1D curves and interactive t-f analysis with synchronized navigation.
