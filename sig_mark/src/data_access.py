@@ -38,8 +38,13 @@ def build_export_tdms_name(start_time: datetime, sample_rate: float) -> str:
     return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.tdms"
 
 
-def build_export_npz_name(start_time: datetime, sample_rate: float) -> str:
-    return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.npz"
+def build_export_npz_name(start_time: datetime, sample_rate: float, sample_type: Optional[str] = None) -> str:
+    sample_type_token = str(sample_type).strip().upper() if sample_type is not None and str(sample_type).strip() else "UNMARKED"
+    return f"{sample_type_token}-FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.npz"
+
+
+def build_export_npz_suffix(start_time: datetime, sample_rate: float) -> str:
+    return f"-FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.npz"
 
 
 def build_export_wav_name(start_time: datetime, sample_rate: float) -> str:

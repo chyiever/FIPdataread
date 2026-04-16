@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -11,10 +11,13 @@ from PyQt5 import QtCore, QtGui, QtMultimedia, QtWidgets
 
 from config import UI_DEFAULTS
 from data_access import (
+    build_export_npz_name,
     build_export_tdms_name,
+    format_arrival_time_token,
     list_data_files,
     load_waveform,
     paginate_files,
+    save_npz_waveform,
     save_tdms_waveform,
     save_wav_waveform,
 )
@@ -26,7 +29,14 @@ from models import (
     LoadedWaveform,
     SortField,
 )
-from plotting import AbsoluteTimeAxis, LogFrequencyAxis, configure_plot_widget, create_colormap, make_pen
+from plotting import (
+    AXIS_TICK_FONT_SIZE_PT,
+    AbsoluteTimeAxis,
+    LogFrequencyAxis,
+    configure_plot_widget,
+    create_colormap,
+    make_pen,
+)
 from processing import (
     apply_display_filter,
     compute_time_frequency_map,
@@ -38,6 +48,7 @@ from processing import (
     validate_filter,
 )
 
+FEATURE_MODE_NONE = "none"
 FEATURE_MODE_SVM = "svm_prediction"
 FEATURE_MODE_ENERGY = "short_time_energy"
 TF_MODE_PSD = "psd"
@@ -96,6 +107,7 @@ class SVMPredictionWorker(QtCore.QObject):
 class TimePlotWidget(pg.PlotWidget):
     windowSelected = QtCore.pyqtSignal(int, int)
     clearSelectionRequested = QtCore.pyqtSignal()
+    arrivalMarkRequested = QtCore.pyqtSignal(float)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -139,6 +151,12 @@ class TimePlotWidget(pg.PlotWidget):
             self._selection_region = None
 
     def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.RightButton and bool(event.modifiers() & QtCore.Qt.ControlModifier):
+            point = self.plotItem.vb.mapSceneToView(self.mapToScene(event.pos()))
+            self.arrivalMarkRequested.emit(self._clamp_x(point.x()))
+            event.accept()
+            return
+
         if event.button() == QtCore.Qt.MiddleButton or (
             event.button() == QtCore.Qt.LeftButton
             and bool(event.modifiers() & QtCore.Qt.ShiftModifier)
@@ -259,6 +277,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._updating_tf_color_spins = False
         self._clamping_time_x_range = False
         self._tf_side_panel_width = 126
+        self._arrival_line: Optional[pg.InfiniteLine] = None
+        self._arrival_sample_index: Optional[float] = None
+        self._arrival_time: Optional[datetime] = None
+        self._sample_type_major_tooltips: dict[int, str] = {}
 
         self._build_ui()
         self._bind_events()
@@ -319,16 +341,50 @@ class MainWindow(QtWidgets.QMainWindow):
         self.directory_edit = QtWidgets.QLineEdit(str(Path.cwd() / "data"))
         self.browse_button = QtWidgets.QPushButton("Browse")
         self.refresh_button = QtWidgets.QPushButton("Refresh")
+        self.export_format_combo = QtWidgets.QComboBox()
+        self.export_format_combo.addItem("NPZ", "npz")
+        self.export_format_combo.addItem("TDMS", "tdms")
         self.export_directory_edit = QtWidgets.QLineEdit(str(Path.cwd() / "exports"))
         self.export_browse_button = QtWidgets.QPushButton("Export Dir")
         self.export_visible_button = QtWidgets.QPushButton("Export Visible Raw Data")
+        self.sample_type_combo = QtWidgets.QComboBox()
+        self.sample_type_combo.setEditable(True)
+        self.sample_type_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+        self.sample_type_combo.lineEdit().setPlaceholderText("Optional sample type code")
+        self.sample_type_combo.setToolTip("Select or input sample type code. Empty means unmarked.")
+        self.sample_type_combo.addItem("")
+        sample_type_groups = [
+            ("断丝 BK", ["BK14", "BK12", "BK40"]),
+            ("平稳流噪声 F", ["F0", "F052", "F065", "F130"]),
+            ("非平稳流噪声 F+a/b/c", ["F0a", "F052a", "F065a", "F130a"]),
+            ("锤击 HM", ["HM12", "HM14"]),
+            ("其他 OT", ["OT"]),
+        ]
+        model = self.sample_type_combo.model()
+        for group_name, codes in sample_type_groups:
+            heading = f"[{group_name}]"
+            self.sample_type_combo.addItem(heading)
+            heading_index = self.sample_type_combo.count() - 1
+            if hasattr(model, "item"):
+                item = model.item(heading_index)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setToolTip("小类选项: " + ", ".join(codes))
+            self._sample_type_major_tooltips[heading_index] = "小类选项: " + ", ".join(codes)
+            for code in codes:
+                self.sample_type_combo.addItem(code)
+        self.sample_type_combo.setCurrentIndex(0)
+        self.sample_type_combo.view().entered.connect(self._handle_sample_type_combo_hover)
         directory_layout.addWidget(self.directory_edit, 0, 0, 1, 2)
         directory_layout.addWidget(self.browse_button, 0, 2)
         directory_layout.addWidget(QtWidgets.QLabel("Export Path"), 1, 0)
         directory_layout.addWidget(self.export_directory_edit, 1, 1)
         directory_layout.addWidget(self.export_browse_button, 1, 2)
         directory_layout.addWidget(self.refresh_button, 2, 0)
-        directory_layout.addWidget(self.export_visible_button, 2, 1, 1, 2)
+        directory_layout.addWidget(self.export_format_combo, 2, 1)
+        directory_layout.addWidget(self.export_visible_button, 2, 2)
+        directory_layout.addWidget(QtWidgets.QLabel("Sample Type"), 3, 0)
+        directory_layout.addWidget(self.sample_type_combo, 3, 1, 1, 2)
 
         sort_group = QtWidgets.QGroupBox("File List")
         sort_layout = QtWidgets.QGridLayout(sort_group)
@@ -631,6 +687,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.visible_window_spin.setValue(UI_DEFAULTS.view.visible_window_seconds)
         self.apply_visible_window_button = QtWidgets.QPushButton("Apply Visible Window")
         self.feature_plot_mode_combo = QtWidgets.QComboBox()
+        self.feature_plot_mode_combo.addItem("None", FEATURE_MODE_NONE)
         self.feature_plot_mode_combo.addItem("SVM Prediction", FEATURE_MODE_SVM)
         self.feature_plot_mode_combo.addItem("Short-Time Energy", FEATURE_MODE_ENERGY)
         info_font = QtGui.QFont("Times New Roman", 11)
@@ -659,10 +716,13 @@ class MainWindow(QtWidgets.QMainWindow):
         configure_plot_widget(self.time_plot, "Phase (rad)", "Time")
         configure_plot_widget(self.feature_plot, "SVM Prediction", "Time")
         configure_plot_widget(self.psd_plot, "PSD (dB rad^2/Hz)", "Frequency (Hz)")
-        configure_plot_widget(self.tf_plot, "Frequency (Hz, log)", "Time")
+        configure_plot_widget(self.tf_plot, "Frequency (Hz)", "Time")
+        self.tf_plot.showGrid(x=True, y=False, alpha=0.22)
         aligned_left_axis_width = 90
         self.time_plot.getPlotItem().getAxis("left").setWidth(aligned_left_axis_width)
-        self.tf_plot.getPlotItem().getAxis("left").setWidth(aligned_left_axis_width)
+        tf_left_axis = self.tf_plot.getPlotItem().getAxis("left")
+        tf_left_axis.setWidth(aligned_left_axis_width)
+        tf_left_axis.setStyle(tickLength=8, maxTickLevel=1, maxTextLevel=0, tickAlpha=255, showValues=True)
         self.psd_plot.setLogMode(x=True, y=False)
         self.feature_plot.setXLink(self.time_plot)
         self.tf_plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
@@ -683,11 +743,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tf_histogram.setBackground("#FFFFFF")
         self.tf_histogram.setStyleSheet("background: #FFFFFF;")
         self.tf_histogram.item.vb.setBackgroundColor("#FFFFFF")
+        self.tf_histogram.item.axis.setPen(pg.mkPen("k"))
+        self.tf_histogram.item.axis.setTextPen(pg.mkPen("k"))
+        self.tf_histogram.item.axis.setStyle(
+            tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
+            tickTextOffset=8,
+            tickAlpha=255,
+        )
         self.tf_histogram.setMinimumWidth(120)
         self.tf_histogram.setMaximumWidth(120)
+        time_column_layout.addLayout(mode_row)
         time_column_layout.addWidget(self.time_plot, stretch=1)
         time_column_layout.addWidget(self.time_scrollbar)
-        time_column_layout.addLayout(mode_row)
         time_layout.addLayout(time_column_layout, stretch=1)
         self.time_right_spacer = QtWidgets.QWidget()
         self.time_right_spacer.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
@@ -701,16 +768,17 @@ class MainWindow(QtWidgets.QMainWindow):
         curve_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         curve_splitter.addWidget(self.feature_plot)
         curve_splitter.addWidget(self.psd_plot)
-        curve_splitter.setSizes([220, 320])
+        curve_splitter.setSizes([110, 430])
         curve_tab_layout.addWidget(curve_splitter)
         tf_tab = QtWidgets.QWidget()
         tf_tab_layout = QtWidgets.QHBoxLayout(tf_tab)
-        tf_tab_layout.setContentsMargins(0, 0, 0, 0)
+        tf_tab_layout.setContentsMargins(0, 6, 6, 6)
         tf_tab_layout.setSpacing(6)
         tf_tab_layout.addWidget(self.tf_plot, stretch=1)
         tf_tab_layout.addWidget(self.tf_histogram)
         self.analysis_tabs = QtWidgets.QTabWidget()
         self.analysis_tabs.setObjectName("analysisTabs")
+        self.analysis_tabs.setTabPosition(QtWidgets.QTabWidget.South)
         self.analysis_tabs.addTab(curve_tab, "1D Curve")
         self.analysis_tabs.addTab(tf_tab, "t-f Plot")
         self._update_time_tf_alignment_for_tab(self.analysis_tabs.currentIndex())
@@ -888,6 +956,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_audio_button.clicked.connect(self._stop_audio_playback)
         self.replay_audio_button.clicked.connect(self._replay_visible_audio)
         self.export_audio_button.clicked.connect(self._export_visible_audio)
+        self.sample_type_combo.currentTextChanged.connect(self._handle_sample_type_text_changed)
         self.sort_field_combo.currentIndexChanged.connect(self._refresh_file_list)
         self.sort_order_combo.currentIndexChanged.connect(self._refresh_file_list)
         self.file_list.currentRowChanged.connect(self._handle_file_selection)
@@ -920,11 +989,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_scrollbar.valueChanged.connect(self._handle_time_scrollbar_change)
         self.time_plot.windowSelected.connect(self._update_psd_from_selection)
         self.time_plot.clearSelectionRequested.connect(self._clear_selection)
+        self.time_plot.arrivalMarkRequested.connect(self._mark_arrival_at_index)
         self.time_plot.getViewBox().sigRangeChanged.connect(self._record_view_history)
         self.time_plot.getViewBox().sigRangeChanged.connect(self._update_visible_length_label)
         self.time_plot.getViewBox().sigRangeChanged.connect(self._handle_time_view_changed)
         self.time_plot.getViewBox().sigXRangeChanged.connect(self._sync_tf_x_from_time)
         self.tf_plot.getViewBox().sigXRangeChanged.connect(self._sync_time_x_from_tf)
+        self.tf_plot.getViewBox().sigYRangeChanged.connect(self._handle_tf_y_range_changed)
+        self.time_plot.scene().sigMouseMoved.connect(self._handle_time_plot_mouse_moved)
+        self.tf_plot.scene().sigMouseMoved.connect(self._handle_tf_plot_mouse_moved)
         self._bind_horizontal_scroll_shortcuts()
 
     def _handle_tf_color_auto_toggled(self, checked: bool) -> None:
@@ -957,6 +1030,113 @@ class MainWindow(QtWidgets.QMainWindow):
                 lambda direction=direction: self._scroll_time_plot_by_step(direction)
             )
             self._scroll_shortcuts.append(shortcut)
+        for sequence, direction in (
+            ("Ctrl+Left", -1),
+            ("Ctrl+Right", 1),
+        ):
+            shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(sequence), self)
+            shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+            shortcut.setAutoRepeat(True)
+            shortcut.activated.connect(
+                lambda direction=direction: self._move_arrival_marker(direction)
+            )
+            self._scroll_shortcuts.append(shortcut)
+
+    def _format_cursor_time(self, sample_index: float) -> Optional[str]:
+        if self._current_waveform is None:
+            return None
+        bounded_sample = float(sample_index)
+        if self._current_display_values.size > 1:
+            bounded_sample = min(max(bounded_sample, 0.0), float(self._current_display_values.size - 1))
+        sample_rate = max(float(self._current_waveform.sample_rate), 1.0)
+        timestamp = self._current_waveform.start_time + timedelta(seconds=bounded_sample / sample_rate)
+        return timestamp.strftime("%H:%M:%S.%f")[:-3]
+
+    def _handle_time_plot_mouse_moved(self, scene_pos: QtCore.QPointF) -> None:
+        if self._current_waveform is None:
+            return
+        view_box = self.time_plot.getViewBox()
+        if not view_box.sceneBoundingRect().contains(scene_pos):
+            return
+        point = view_box.mapSceneToView(scene_pos)
+        x = float(point.x())
+        y = float(point.y())
+        if self._current_display_values.size > 1:
+            x = min(max(x, 0.0), float(self._current_display_values.size - 1))
+        time_text = self._format_cursor_time(x)
+        if time_text is None:
+            return
+        self.statusBar().showMessage(f"Cursor(Time): t={time_text}, amplitude={y:.6g}")
+
+    def _lookup_tf_cursor_value(self, sample_index: float, freq_hz: float) -> Optional[tuple[float, str]]:
+        if self._tf_time_centers.size == 0 or self._tf_freq_hz.size == 0 or self._tf_base_values.size == 0:
+            return None
+        valid = self._tf_freq_hz > 0.0
+        if not np.any(valid):
+            return None
+        freqs = self._tf_freq_hz[valid]
+        values = self._tf_base_values[valid, :]
+        if values.size == 0:
+            return None
+        time_idx = int(np.argmin(np.abs(self._tf_time_centers - sample_index)))
+        freq_idx = int(np.argmin(np.abs(freqs - freq_hz)))
+        base_value = float(values[freq_idx, time_idx])
+        if self._current_tf_scale() == TF_SCALE_LOG:
+            floor = np.finfo(np.float64).tiny
+            if self._tf_base_mode == TF_MODE_PSD:
+                return 10.0 * np.log10(max(base_value, floor)), "dB(PSD)"
+            return 20.0 * np.log10(max(base_value, floor)), "dB(Amp)"
+        return base_value, "linear"
+
+    def _handle_tf_plot_mouse_moved(self, scene_pos: QtCore.QPointF) -> None:
+        if self._current_waveform is None:
+            return
+        view_box = self.tf_plot.getViewBox()
+        if not view_box.sceneBoundingRect().contains(scene_pos):
+            return
+        point = view_box.mapSceneToView(scene_pos)
+        x = float(point.x())
+        y_log = float(point.y())
+        freq_hz = 10.0 ** y_log
+        time_text = self._format_cursor_time(x)
+        if time_text is None:
+            return
+        tf_value = self._lookup_tf_cursor_value(x, freq_hz)
+        if tf_value is None:
+            self.statusBar().showMessage(f"Cursor(t-f): t={time_text}, f={freq_hz:.3f} Hz")
+            return
+        value, unit = tf_value
+        self.statusBar().showMessage(
+            f"Cursor(t-f): t={time_text}, f={freq_hz:.3f} Hz, value={value:.6g} {unit}"
+        )
+
+    def _handle_sample_type_combo_hover(self, index: QtCore.QModelIndex) -> None:
+        if not index.isValid():
+            return
+        text = self._sample_type_major_tooltips.get(int(index.row()))
+        if text:
+            QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), text, self.sample_type_combo.view())
+
+    def _set_sample_type_text(self, value: str) -> None:
+        self.sample_type_combo.blockSignals(True)
+        self.sample_type_combo.setEditText(value)
+        self.sample_type_combo.blockSignals(False)
+
+    def _current_sample_type_code(self) -> Optional[str]:
+        text = self.sample_type_combo.currentText().strip()
+        if not text:
+            return None
+        return text.upper().replace(" ", "")
+
+    def _sample_type_filename_token(self, sample_type: str) -> str:
+        code = str(sample_type).strip().upper().replace(" ", "")
+        safe = "".join(ch for ch in code if ch.isalnum())
+        return safe if safe else "TAG"
+
+    def _handle_sample_type_text_changed(self, text: str) -> None:
+        normalized = text.strip().upper().replace(" ", "")
+        if normalized:
+            self.statusBar().showMessage(f"Sample type set to {normalized}.")
 
     def _choose_directory(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(
@@ -1031,22 +1211,44 @@ class MainWindow(QtWidgets.QMainWindow):
         segment_start_time = self._current_waveform.start_time + timedelta(
             seconds=start_index / self._current_waveform.sample_rate
         )
-        filename = build_export_tdms_name(segment_start_time, self._current_waveform.sample_rate)
+        sample_type_code = self._current_sample_type_code()
+        export_format = str(self.export_format_combo.currentData() or "npz").lower()
+        if export_format == "npz":
+            base_name = build_export_npz_name(segment_start_time, self._current_waveform.sample_rate)
+            if sample_type_code is None:
+                filename = base_name
+            else:
+                filename = f"{self._sample_type_filename_token(sample_type_code)}-{base_name}"
+        elif export_format == "tdms":
+            filename = build_export_tdms_name(segment_start_time, self._current_waveform.sample_rate)
+        else:
+            self.statusBar().showMessage(f'Unsupported export format: {export_format}')
+            return
         destination = export_directory / filename
 
         try:
-            save_tdms_waveform(
-                destination,
-                segment,
-                self._current_waveform.sample_rate,
-                segment_start_time,
-            )
+            if export_format == "npz":
+                save_npz_waveform(
+                    destination,
+                    segment,
+                    self._current_waveform.sample_rate,
+                    segment_start_time,
+                    self._arrival_time,
+                    sample_type_code,
+                )
+            else:
+                save_tdms_waveform(
+                    destination,
+                    segment,
+                    self._current_waveform.sample_rate,
+                    segment_start_time,
+                )
         except Exception as exc:
             self.statusBar().showMessage(f'Export failed: {exc}')
             return
 
         self.statusBar().showMessage(
-            f'Exported visible raw data to {destination}'
+            f'Exported visible raw data ({export_format.upper()}) to {destination}'
         )
 
     def _get_visible_display_segment(self) -> Optional[tuple[np.ndarray, float, int, int]]:
@@ -1379,6 +1581,8 @@ class MainWindow(QtWidgets.QMainWindow):
         task_id = self._load_task_id
         self._prediction_task_id += 1
         self._current_waveform = None
+        self._set_sample_type_text("")
+        self._clear_arrival_marker()
         self._current_display_values = np.array([], dtype=np.float64)
         self._audio_player.stop()
         self._clear_audio_temp_path()
@@ -1419,18 +1623,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if task_id != self._load_task_id:
             return
         self._current_waveform = waveform
+        self._set_sample_type_text(waveform.sample_type or "")
         self._rebuild_time_plot()
+        self._apply_loaded_arrival_time(waveform)
+        header_message = self._build_waveform_header_message(waveform)
         warning = waveform.data_info_warning
         if warning:
-            self.statusBar().showMessage(f"{waveform.path.name}: {warning}")
+            self.statusBar().showMessage(f"{header_message} | warning: {warning}")
         else:
-            self.statusBar().showMessage(f"Opened {waveform.path.name}")
+            self.statusBar().showMessage(header_message)
 
     @QtCore.pyqtSlot(int, str)
     def _handle_waveform_load_failed(self, task_id: int, message: str) -> None:
         if task_id != self._load_task_id:
             return
         self._current_waveform = None
+        self._clear_arrival_marker()
         self.statusBar().showMessage(f"Failed to open file: {message}")
 
     def _start_short_time_feature_prediction(self) -> None:
@@ -1521,9 +1729,85 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_view_state(
             ((0.0, float(max(1, len(self._current_display_values) - 1))), self._default_y_range())
         )
+        if self._arrival_sample_index is not None:
+            self._set_arrival_marker(self._arrival_sample_index, announce=False)
         self._refresh_default_audio_path()
         self._rebuild_short_time_feature_plot()
         self._rebuild_time_frequency_plot()
+
+    def _format_arrival_time(self, value: Optional[datetime]) -> str:
+        if value is None:
+            return "None"
+        return format_arrival_time_token(value)
+
+    def _build_waveform_header_message(self, waveform: LoadedWaveform) -> str:
+        sample_rate = float(waveform.sample_rate)
+        duration = float(waveform.phase_data.size) / max(sample_rate, 1.0)
+        arrival_text = self._format_arrival_time(waveform.arrival_time)
+        sample_type_text = waveform.sample_type if waveform.sample_type else "None"
+        return (
+            f"{waveform.path.name} | sample_rate={sample_rate:g} Hz | "
+            f"sample_type={sample_type_text} | arrival_time={arrival_text} | duration={duration:.6f} s"
+        )
+
+    def _arrival_datetime_from_sample(self, sample_index: float) -> Optional[datetime]:
+        if self._current_waveform is None:
+            return None
+        sample_rate = max(float(self._current_waveform.sample_rate), 1.0)
+        return self._current_waveform.start_time + timedelta(seconds=float(sample_index) / sample_rate)
+
+    def _set_arrival_marker(self, sample_index: float, *, announce: bool) -> None:
+        if self._current_waveform is None or self._current_display_values.size == 0:
+            self._clear_arrival_marker()
+            return
+        bounded = min(max(float(sample_index), 0.0), float(self._current_display_values.size - 1))
+        if self._arrival_line is None:
+            self._arrival_line = pg.InfiniteLine(
+                pos=bounded,
+                angle=90,
+                pen=make_pen("#0066FF", 2),
+                movable=False,
+            )
+            self.time_plot.addItem(self._arrival_line)
+        else:
+            self._arrival_line.setPos(bounded)
+        self._arrival_sample_index = bounded
+        self._arrival_time = self._arrival_datetime_from_sample(bounded)
+        if announce and self._arrival_time is not None:
+            self.statusBar().showMessage(f"First arrival time: {self._format_arrival_time(self._arrival_time)}")
+
+    def _clear_arrival_marker(self) -> None:
+        if self._arrival_line is not None:
+            try:
+                self.time_plot.removeItem(self._arrival_line)
+            except Exception:
+                pass
+        self._arrival_line = None
+        self._arrival_sample_index = None
+        self._arrival_time = None
+
+    def _mark_arrival_at_index(self, sample_index: float) -> None:
+        if self._current_waveform is None:
+            return
+        self._set_arrival_marker(sample_index, announce=True)
+
+    def _move_arrival_marker(self, direction: int) -> None:
+        if self._current_waveform is None:
+            return
+        if self._arrival_sample_index is None:
+            self.statusBar().showMessage("First arrival marker is not set.")
+            return
+        step_seconds = 0.0001
+        step_samples = step_seconds * max(float(self._current_waveform.sample_rate), 1.0)
+        self._set_arrival_marker(self._arrival_sample_index + direction * step_samples, announce=True)
+
+    def _apply_loaded_arrival_time(self, waveform: LoadedWaveform) -> None:
+        if waveform.arrival_time is None:
+            self._clear_arrival_marker()
+            return
+        delta_seconds = (waveform.arrival_time - waveform.start_time).total_seconds()
+        sample_index = delta_seconds * max(float(waveform.sample_rate), 1.0)
+        self._set_arrival_marker(sample_index, announce=False)
 
     def _apply_y_range(self) -> None:
         if self._current_waveform is None:
@@ -1565,6 +1849,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tf_base_values = np.array([], dtype=np.float64)
         self._tf_log_freq_bounds = None
         self.tf_image_item.setImage(np.empty((0, 0), dtype=np.float64), autoLevels=False)
+        self.tf_plot.getPlotItem().getAxis("left").setTicks(None)
+
+    def _update_time_frequency_axis_ticks(self) -> None:
+        axis = self.tf_plot.getPlotItem().getAxis("left")
+        if self._tf_log_freq_bounds is None:
+            axis.setTicks(None)
+            return
+
+        y_range = self.tf_plot.getViewBox().viewRange()[1]
+        y_min, y_max = sorted((float(y_range[0]), float(y_range[1])))
+        if not np.isfinite(y_min) or not np.isfinite(y_max) or y_max <= y_min:
+            return
+
+        lo_decade = int(np.floor(y_min))
+        hi_decade = int(np.ceil(y_max))
+        major_ticks: list[tuple[float, str]] = []
+        minor_ticks: list[tuple[float, str]] = []
+
+        for decade in range(lo_decade, hi_decade + 1):
+            tick = float(decade)
+            if y_min <= tick <= y_max:
+                freq = 10.0 ** tick
+                if freq >= 10000.0:
+                    label = f"{freq:.0f}"
+                elif freq >= 1000.0:
+                    label = f"{freq:.1f}"
+                elif freq >= 10.0:
+                    label = f"{freq:.0f}"
+                else:
+                    label = f"{freq:.2f}"
+                major_ticks.append((tick, label))
+            # Standard base-10 log subticks: 2..9 within each decade.
+            for factor in range(2, 10):
+                sub_tick = decade + float(np.log10(factor))
+                if y_min <= sub_tick <= y_max:
+                    minor_ticks.append((sub_tick, ""))
+
+        axis.setTicks([major_ticks, minor_ticks])
+
+    def _handle_tf_y_range_changed(self, *_args) -> None:
+        if self._tf_log_freq_bounds is None:
+            return
+        self._update_time_frequency_axis_ticks()
 
     def _rebuild_time_frequency_plot(self) -> None:
         if self._current_waveform is None:
@@ -1633,17 +1960,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         freqs = self._tf_freq_hz[valid]
-        base_values = self._tf_base_values[valid, :]
-        floor = np.finfo(np.float64).tiny
-        if self._current_tf_scale() == TF_SCALE_LOG:
-            if self._tf_base_mode == TF_MODE_PSD:
-                display_values = 10.0 * np.log10(np.maximum(base_values, floor))
-            else:
-                display_values = 20.0 * np.log10(np.maximum(base_values, floor))
-        else:
-            display_values = np.asarray(base_values, dtype=np.float64)
+        display_values, log_freq = self._build_time_frequency_display_grid()
+        if display_values.size == 0 or log_freq.size == 0:
+            self._clear_time_frequency_plot()
+            self.statusBar().showMessage("t-f plot could not build a valid display grid.")
+            return
 
-        log_freq = np.log10(freqs)
         self._tf_log_freq_bounds = (float(log_freq[0]), float(log_freq[-1]))
         self.tf_image_item.setImage(display_values, autoLevels=False)
         self._apply_time_frequency_colormap()
@@ -1666,7 +1988,7 @@ class MainWindow(QtWidgets.QMainWindow):
             xMin=x0 - dx,
             xMax=x1 + dx,
             yMin=float(log_freq[0]) - dy,
-            yMax=float(log_freq[-1]) + dy,
+            yMax=float(log_freq[-1]) + (1.2 * dy),
         )
         self._apply_time_frequency_y_range()
         self._apply_time_frequency_color_levels(display_values)
@@ -1675,6 +1997,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"t-f plot updated: {mode_label}, {self._tf_time_centers.size} windows, {freqs.size} frequency bins."
         )
+
+    def _build_time_frequency_display_grid(self) -> tuple[np.ndarray, np.ndarray]:
+        valid = self._tf_freq_hz > 0.0
+        if not np.any(valid):
+            return np.empty((0, 0), dtype=np.float64), np.array([], dtype=np.float64)
+
+        freqs = np.asarray(self._tf_freq_hz[valid], dtype=np.float64)
+        base_values = np.asarray(self._tf_base_values[valid, :], dtype=np.float64)
+        if freqs.size == 0 or base_values.size == 0:
+            return np.empty((0, 0), dtype=np.float64), np.array([], dtype=np.float64)
+
+        if freqs.size == 1:
+            log_freq = np.array([float(np.log10(freqs[0]))], dtype=np.float64)
+            resampled_values = base_values.copy()
+        else:
+            log_freq = np.linspace(float(np.log10(freqs[0])), float(np.log10(freqs[-1])), freqs.size, dtype=np.float64)
+            target_freqs = np.power(10.0, log_freq)
+            resampled_values = np.empty_like(base_values, dtype=np.float64)
+            for column_index in range(base_values.shape[1]):
+                resampled_values[:, column_index] = np.interp(
+                    target_freqs,
+                    freqs,
+                    base_values[:, column_index],
+                )
+
+        if self._current_tf_scale() == TF_SCALE_LOG:
+            floor = np.finfo(np.float64).tiny
+            if self._tf_base_mode == TF_MODE_PSD:
+                display_values = 10.0 * np.log10(np.maximum(resampled_values, floor))
+            else:
+                display_values = 20.0 * np.log10(np.maximum(resampled_values, floor))
+        else:
+            display_values = resampled_values
+        return np.asarray(display_values, dtype=np.float64), log_freq
 
     def _apply_time_frequency_colormap(self) -> None:
         color_map = create_colormap(self._current_tf_colormap_name())
@@ -1690,7 +2046,9 @@ class MainWindow(QtWidgets.QMainWindow):
         y_max = float(self.tf_y_max_spin.value())
         if y_min == 0.0 and y_max == 0.0:
             view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
-            view_box.setYRange(lower_bound, upper_bound, padding=0.0)
+            top_margin = max((upper_bound - lower_bound) * 0.02, 0.02)
+            view_box.setYRange(lower_bound, upper_bound + top_margin, padding=0.0)
+            self._update_time_frequency_axis_ticks()
             return
         if y_min <= 0.0 or y_max <= 0.0 or y_min >= y_max:
             self.statusBar().showMessage("Invalid t-f Y range. Kept previous range.")
@@ -1701,24 +2059,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("t-f Y range is outside available frequencies.")
             return
         view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
-        view_box.setYRange(float(log_min), float(log_max), padding=0.0)
+        top_margin = max((float(log_max) - float(log_min)) * 0.02, 0.02)
+        view_box.setYRange(float(log_min), float(log_max) + top_margin, padding=0.0)
+        self._update_time_frequency_axis_ticks()
 
     def _apply_time_frequency_color_levels(self, values: Optional[np.ndarray] = None) -> None:
         if values is None:
             if self._tf_base_values.size == 0:
                 return
-            valid = self._tf_freq_hz > 0.0
-            if not np.any(valid):
+            values, _log_freq = self._build_time_frequency_display_grid()
+            if values.size == 0:
                 return
-            base_values = self._tf_base_values[valid, :]
-            floor = np.finfo(np.float64).tiny
-            if self._current_tf_scale() == TF_SCALE_LOG:
-                if self._tf_base_mode == TF_MODE_PSD:
-                    values = 10.0 * np.log10(np.maximum(base_values, floor))
-                else:
-                    values = 20.0 * np.log10(np.maximum(base_values, floor))
-            else:
-                values = np.asarray(base_values, dtype=np.float64)
         if values.size == 0:
             return
 
@@ -1759,6 +2110,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_feature_y_range(self) -> None:
         view_box = self.feature_plot.getViewBox()
+        if self._current_feature_mode() == FEATURE_MODE_NONE:
+            view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            return
         if self._current_feature_mode() == FEATURE_MODE_SVM:
             view_box.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
             view_box.setYRange(-0.1, 1.1, padding=0.0)
@@ -1777,6 +2131,9 @@ class MainWindow(QtWidgets.QMainWindow):
         view_box.setYRange(y_min, y_max, padding=0.0)
 
     def _rebuild_short_time_feature_plot(self) -> None:
+        if self._current_feature_mode() == FEATURE_MODE_NONE:
+            self._clear_short_time_feature_plot()
+            return
         if self._current_feature_mode() == FEATURE_MODE_SVM:
             self._start_short_time_feature_prediction()
             return
@@ -1863,7 +2220,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_feature_plot_style(self) -> None:
         plot_item = self.feature_plot.getPlotItem()
-        if self._current_feature_mode() == FEATURE_MODE_SVM:
+        if self._current_feature_mode() == FEATURE_MODE_NONE:
+            plot_item.setLabel("left", "Plot 2")
+        elif self._current_feature_mode() == FEATURE_MODE_SVM:
             plot_item.setLabel("left", "SVM Prediction")
         else:
             plot_item.setLabel("left", "Band Energy Density Ratio (dB)")
