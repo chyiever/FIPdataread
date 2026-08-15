@@ -50,6 +50,35 @@ def validate_filter(
     return True, None
 
 
+def _build_filter_sos(
+    mode: FilterMode,
+    sample_rate: float,
+    low_cut_hz: float,
+    high_cut_hz: float,
+) -> np.ndarray:
+    nyquist = sample_rate / 2.0
+    if mode == FilterMode.BANDPASS:
+        return butter(
+            N=4,
+            Wn=[low_cut_hz / nyquist, high_cut_hz / nyquist],
+            btype="bandpass",
+            output="sos",
+        )
+    if mode == FilterMode.HIGHPASS:
+        return butter(
+            N=4,
+            Wn=low_cut_hz / nyquist,
+            btype="highpass",
+            output="sos",
+        )
+    return butter(
+        N=4,
+        Wn=high_cut_hz / nyquist,
+        btype="lowpass",
+        output="sos",
+    )
+
+
 def apply_display_filter(
     values: np.ndarray,
     sample_rate: float,
@@ -62,29 +91,7 @@ def apply_display_filter(
     if result.size == 0 or not enabled:
         return result
 
-    nyquist = sample_rate / 2.0
-    if mode == FilterMode.BANDPASS:
-        sos = butter(
-            N=4,
-            Wn=[low_cut_hz / nyquist, high_cut_hz / nyquist],
-            btype="bandpass",
-            output="sos",
-        )
-    elif mode == FilterMode.HIGHPASS:
-        sos = butter(
-            N=4,
-            Wn=low_cut_hz / nyquist,
-            btype="highpass",
-            output="sos",
-        )
-    else:
-        sos = butter(
-            N=4,
-            Wn=high_cut_hz / nyquist,
-            btype="lowpass",
-            output="sos",
-        )
-
+    sos = _build_filter_sos(mode, sample_rate, low_cut_hz, high_cut_hz)
     return sosfiltfilt(sos, result)
 
 

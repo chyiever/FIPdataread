@@ -86,3 +86,63 @@ Purpose: keep a simple long-term update log for this project.
   - `src/main_window.py::_apply_time_frequency_color_levels()`
 - Problem solved: the `t-f Plot` y-axis labels and the rendered energy distribution now refer to the same physical frequencies; a `10 kHz ~ 50 kHz` band-pass no longer appears falsely concentrated around `1~3 kHz`.
 - Problem solved: `t-f Plot` now shows correct log-frequency major/minor ticks and outward short axis ticks on both left and bottom axes without mistaking them for in-plot grid lines.
+
+## 2026-08-01
+- Added `build_exe.py` for PyInstaller-based Windows packaging.
+- Default exe name is `FIP.YYYY.MM.DD.exe`, for example `FIP.2026.08.01.exe`.
+- The build script stages PyInstaller outputs under `build/`, moves only the final exe into `dist/`, and removes intermediate files after a successful build.
+- Existing `dist/*.exe` files are preserved by default; if the same output name already exists, the new exe receives a time suffix instead of overwriting the old one.
+- Bundled runtime resources required by the packaged app:
+  - `logo.png`
+  - `models/saved_models`
+- Updated app resource lookup so logo and SVM model paths work both from source and from a PyInstaller onefile runtime.
+- Updated `README.md` with exe build dependencies, default output naming, old-exe preservation behavior, and common packaging command variants.
+- Fixed packaged exe startup failure caused by a non-`pyqtgraph.ColorMap` object being passed into `ImageItem.setColorMap()` during t-f plot initialization.
+- Added a matplotlib-to-`pyqtgraph.ColorMap` conversion path and packaged matplotlib colormap modules so the t-f color bar stays visually consistent with source-mode display.
+- Kept local fallback color maps for emergency startup only when matplotlib colormap loading is unavailable.
+- Narrowed the default sklearn packaging scope to the modules required by the bundled `Pipeline(StandardScaler, SVC)` model; `--collect-sklearn` remains available as a slower compatibility fallback.
+- Moved the generated `.ico` file out of the cleaned build directory so PyInstaller can still find it during the final exe assembly step.
+- Added compatibility for TDMS files named like `SemiPhase-1MHz-2026-8-1-12-43-36.tdms`.
+- Extended filename parsing to support `K/KHz/M/MHz` sample-rate tokens and `YYYY-M-D-H-M-S` start-time tokens.
+- Extended `LoadedWaveform` to retain all TDMS channels while preserving `phase_data` as channel 1 for existing first-channel workflows.
+- Added `Channel 2 Waveform` to the Plot 2 dropdown; it applies the same display filter preprocessing as channel 1.
+- Added a PSD source dropdown with `Channel 1`, `Channel 2`, and `Both Channels`; channel 1 remains the default for all files.
+- Updated README and data-structure documentation for the new TDMS dual-channel behavior.
+- Problem solved: two-channel TDMS files can now be inspected without losing the existing first-channel workflows, and PSD comparison between channel 1 and channel 2 is available from the UI.
+- Problem solved: FIPread now has a repeatable exe packaging workflow that keeps historical builds while cleaning temporary packaging artifacts.
+
+## 2026-08-14
+- Fixed GUI font-size inconsistency across machines where the UI text appears too large and overflows buttons after moving the app to another computer.
+- Root cause:
+  - the Qt application was created without enabling high-DPI scaling
+  - on displays with Windows scaling above 100%, Qt sized point-based fonts (SimSun/Times New Roman) using the physical DPI while widget geometry stayed in logical pixels
+  - the mismatch made button text render larger than the button bounds, so labels got clipped or displayed incompletely
+- Fix:
+  - `run.py` now enables `Qt.AA_EnableHighDpiScaling` and `Qt.AA_UseHighDpiPixmaps` before creating the `QApplication`
+  - with high-DPI scaling on, Qt scales fonts and layouts by the same device-pixel ratio, so text always fits its widgets regardless of the host display scaling
+  - applied the same change to `sig_mark/run.py`
+- Problem solved: the GUI now renders with consistent font/widget proportions on different computers, and button labels are no longer cut off.
+- Rebuilt the packaged exe with the existing naming convention (`FIP.2026.08.14.exe`).
+
+## 2026-08-14 (续)
+- Added `docs/required-libraries.md` as the required-library manifest.
+  - Lists all runtime dependencies (numpy, scipy, PyQt5, pyqtgraph, nptdms, pandas, joblib, scikit-learn, matplotlib) and build-only dependencies (pyinstaller, Pillow) with the versions verified in the development environment.
+- Added `requirements.txt` for runtime dependencies and `requirements-build.txt` for packaging dependencies.
+- Updated `README.md` to install dependencies in batch via `pip install -r requirements.txt` and `pip install -r requirements-build.txt`, replacing the previous single-line install command.
+- Problem solved: a fresh machine can now restore the full environment with two pip commands instead of remembering the library list manually.
+
+## 2026-08-15
+- Fixed the main-splitter layout so the left control panel no longer collapses to a narrow strip and is hard to pull open.
+  - Root cause: the right panel `mode_row` (6 mode buttons + labels + 2 combo boxes + spin box + Apply button) forced a ~1539 px minimum width, and together with the left panel minimum it made the window minimum wider than the available screen width, collapsing the left pane.
+  - Fix: reduced mode button minimum width to 56 px with `Preferred` policy, trimmed combo-box minimum width and row spacings, kept the left scroll area at a 360 px minimum, and set the initial splitter ratio to approximately 1:5 at startup.
+  - Problem solved: the left panel stays at a usable width, the right controls remain fully visible, and the window fits the available screen (e.g. 1667 px on a 1707 px logical screen).
+- Aligned the left edges of Plot 1 (time-domain) and Plot 2 (feature) by giving both plots the same left-axis width (90 px).
+- Made Plot 1 / Plot 2 X-axis zoom synchronized in both directions.
+  - Previously `feature_plot.setXLink(time_plot)` only let Plot 1 drive Plot 2.
+  - Replaced it with `sigXRangeChanged` handlers in both directions plus a `_syncing_time_feature_x` re-entry guard, so zooming either plot updates the other without feedback loops.
+- Optimized large-file handling (hundreds of MB) without any sampling-rate reduction or data-integrity loss.
+  - Verified the existing pipeline already keeps full-resolution arrays: reading (~0.2 s for 6M points), zero-phase `sosfiltfilt` filtering (~0.14 s), and display-only decimation (`setDownsampling` peak + `setClipToView`) that never touches the underlying data.
+  - Moved Butterworth SOS coefficient design into `_build_filter_sos()` so filters are not re-designed on every call.
+  - Vectorized the time-frequency display-grid interpolation: replaced the per-column `np.interp` loop with `searchsorted` + vectorized lerp, cutting grid build time from ~0.7 s to ~0.5 s while keeping results bitwise-consistent.
+- Added `FIP快速读取-处理-绘图策略总结.md` summarizing the fast read/filter/plot strategy for large TDMS files.
+- Problem solved: the UI now stays responsive for multi-million-point files, Plot 1/Plot 2 align and zoom together, and the layout no longer collapses on lower-resolution screens.

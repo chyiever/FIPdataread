@@ -13,7 +13,14 @@ from models import FileRecord, LoadedWaveform, PagedFiles, SortField
 
 
 TIME_TOKEN_RE = re.compile(r"(?P<stamp>\d{8}T\d{6}(?:\.\d{1,6})?)")
-SAMPLE_RATE_TOKEN_RE = re.compile(r"-(?P<rate>\d+(?:\.\d+)?)K-", re.IGNORECASE)
+FILENAME_DATE_TOKEN_RE = re.compile(
+    r"(?P<year>\d{4})[-_](?P<month>\d{1,2})[-_](?P<day>\d{1,2})"
+    r"[-_](?P<hour>\d{1,2})[-_](?P<minute>\d{1,2})[-_](?P<second>\d{1,2})"
+)
+SAMPLE_RATE_TOKEN_RE = re.compile(
+    r"(?:^|[-_])(?P<rate>\d+(?:\.\d+)?)(?P<unit>mhz|m|khz|k)(?=$|[-_])",
+    re.IGNORECASE,
+)
 ARRIVAL_TIME_TOKEN_RE = re.compile(r"(?P<stamp>\d{14}(?:\.\d{1,6})?)")
 SUPPORTED_SUFFIXES = {".npz", ".tdms"}
 
@@ -127,23 +134,36 @@ def save_wav_waveform(path: Path, phase_data: np.ndarray, sample_rate: float) ->
 
 def parse_start_time_from_name(path: Path) -> datetime:
     match = TIME_TOKEN_RE.search(path.name)
-    if not match:
-        return datetime.fromtimestamp(path.stat().st_mtime)
+    if match:
+        value = match.group("stamp")
+        if "." in value:
+            main, frac = value.split(".", 1)
+            frac = (frac + "000000")[:6]
+            value = f"{main}.{frac}"
+            return datetime.strptime(value, "%Y%m%dT%H%M%S.%f")
+        return datetime.strptime(value, "%Y%m%dT%H%M%S")
 
-    value = match.group("stamp")
-    if "." in value:
-        main, frac = value.split(".", 1)
-        frac = (frac + "000000")[:6]
-        value = f"{main}.{frac}"
-        return datetime.strptime(value, "%Y%m%dT%H%M%S.%f")
-    return datetime.strptime(value, "%Y%m%dT%H%M%S")
+    date_match = FILENAME_DATE_TOKEN_RE.search(path.name)
+    if date_match:
+        return datetime(
+            year=int(date_match.group("year")),
+            month=int(date_match.group("month")),
+            day=int(date_match.group("day")),
+            hour=int(date_match.group("hour")),
+            minute=int(date_match.group("minute")),
+            second=int(date_match.group("second")),
+        )
+
+    return datetime.fromtimestamp(path.stat().st_mtime)
 
 
 def parse_sample_rate_from_name(path: Path) -> float:
     match = SAMPLE_RATE_TOKEN_RE.search(path.name)
     if not match:
         raise ValueError(f"Cannot determine sample rate from file name: {path.name}")
-    return float(match.group("rate")) * 1_000.0
+    unit = match.group("unit").lower()
+    factor = 1_000_000.0 if unit.startswith("m") else 1_000.0
+    return float(match.group("rate")) * factor
 
 
 def parse_arrival_time_token(value: object) -> Optional[datetime]:
@@ -298,6 +318,8 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
         data_info_warning=warning,
         arrival_time=arrival_time,
         sample_type=sample_type,
+        channels=(phase_data,),
+        channel_names=("phase_data",),
     )
 
 
@@ -310,17 +332,27 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
         ) from exc
 
     tdms_file = TdmsFile.read(path)
-    selected_channel = None
+    selected_group = None
+    selected_channels = []
     for group in tdms_file.groups():
         channels = group.channels()
         if channels:
-            selected_channel = channels[0]
+            selected_group = group
+            selected_channels = channels
             break
 
-    if selected_channel is None:
+    if not selected_channels or selected_group is None:
         raise ValueError(f"No readable channels found in TDMS file: {path.name}")
 
-    phase_data = np.asarray(selected_channel[:], dtype=np.float64).reshape(-1)
+    channel_arrays = tuple(
+        np.asarray(channel[:], dtype=np.float64).reshape(-1)
+        for channel in selected_channels
+    )
+    channel_names = tuple(
+        str(channel.name).strip() or f"Channel {index + 1}"
+        for index, channel in enumerate(selected_channels)
+    )
+    phase_data = channel_arrays[0]
     sample_rate = parse_sample_rate_from_name(path)
     start_time = parse_start_time_from_name(path)
     return LoadedWaveform(
@@ -332,16 +364,21 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
         start_time=start_time,
         data_info={
             "source_format": "tdms",
-            "group_name": selected_channel.group_name,
-            "channel_name": selected_channel.name,
+            "group_name": selected_group.name,
+            "channel_name": channel_names[0],
+            "channel_names": channel_names,
+            "channel_count": len(channel_arrays),
         },
         data_info_warning=None,
         arrival_time=None,
         sample_type=None,
+        channels=channel_arrays,
+        channel_names=channel_names,
     )
 
 
 def load_waveform(path: Path) -> LoadedWaveform:
+    path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".npz":
         return _load_npz_waveform(path)

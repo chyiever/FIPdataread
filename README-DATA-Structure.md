@@ -1,5 +1,68 @@
 # DATA Structure README
 
+## Current TDMS Dual-Channel Compatibility
+
+This section records the current TDMS compatibility rules for files such as:
+
+```text
+SemiPhase-1MHz-2026-8-1-12-43-36.tdms
+```
+
+### TDMS Channel Loading
+
+- The loader scans the first TDMS group that contains channels.
+- All channels in that group are loaded as `float64` one-dimensional arrays.
+- `LoadedWaveform.phase_data` remains channel 1 for backward compatibility.
+- `LoadedWaveform.channels` stores every loaded channel in TDMS order.
+- `LoadedWaveform.channel_names` stores TDMS channel names in the same order.
+- `LoadedWaveform.channel_count` reports the number of loaded channels.
+
+For the sample file above:
+
+```text
+group: Data
+channel 1: Untitled
+channel 2: Untitled 1
+sample_rate: 1000000 Hz
+start_time: 2026-08-01 12:43:36
+```
+
+### TDMS Filename Parsing
+
+Supported sample-rate tokens include:
+
+- `-<rate>K-`, for example `-200K-`
+- `-<rate>KHz-`, for example `-200KHz-`
+- `-<rate>M-`, for example `-1M-`
+- `-<rate>MHz-`, for example `-1MHz-`
+
+Supported start-time tokens include:
+
+- `YYYYMMDDTHHMMSS`
+- `YYYYMMDDTHHMMSS.fff...`
+- `YYYY-M-D-H-M-S`, for example `2026-8-1-12-43-36`
+
+If no supported time token is present, file modification time is still used as the fallback.
+
+### UI Behavior For Two-Channel TDMS
+
+- The top time-domain plot always displays channel 1 by default.
+- Plot 2 can select `Channel 2 Waveform` from the `Plot 2` dropdown.
+- Plot 2 channel 2 waveform uses the same display filter preprocessing as channel 1.
+- The PSD dropdown supports `Channel 1`, `Channel 2`, and `Both Channels`.
+- PSD defaults to `Channel 1` for both one-channel and two-channel TDMS files.
+- When a single-channel file is loaded, channel 2 and both-channel PSD options are disabled.
+
+### Behaviors That Remain Channel 1
+
+The following existing workflows still use channel 1:
+
+- visible raw data export
+- audio playback and audio export
+- SVM prediction
+- short-time energy
+- t-f plot
+
 本文档描述 FIPread 当前版本的数据读取与导出结构（对应代码：`src/data_access.py`、`src/main_window.py`、`src/processing.py`）。
 
 ## 1. 可读取的数据类型

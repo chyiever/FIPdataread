@@ -1,0 +1,11 @@
+# FIPread runtime dependencies
+# Install with:  pip install -r requirements.txt
+numpy==1.26.4
+scipy==1.13.1
+PyQt5==5.15.10
+pyqtgraph==0.13.7
+nptdms==1.10.0
+pandas==2.0.3
+joblib==1.4.2
+scikit-learn==1.6.1
+matplotlib==3.9.2

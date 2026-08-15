@@ -1,14 +1,84 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Optional
 
+import numpy as np
 from PyQt5 import QtGui
 import pyqtgraph as pg
 
 AXIS_LABEL_FONT_SIZE_PT = 13
 AXIS_TICK_FONT_SIZE_PT = 13
 TIME_AXIS_HEIGHT_PX = 62
+
+
+_FALLBACK_COLORMAPS: dict[str, list[tuple[float, tuple[int, int, int]]]] = {
+    "jet": [
+        (0.00, (0, 0, 128)),
+        (0.12, (0, 0, 255)),
+        (0.35, (0, 255, 255)),
+        (0.50, (255, 255, 0)),
+        (0.75, (255, 0, 0)),
+        (1.00, (128, 0, 0)),
+    ],
+    "hsv": [
+        (0.00, (255, 0, 0)),
+        (0.17, (255, 255, 0)),
+        (0.33, (0, 255, 0)),
+        (0.50, (0, 255, 255)),
+        (0.67, (0, 0, 255)),
+        (0.83, (255, 0, 255)),
+        (1.00, (255, 0, 0)),
+    ],
+    "seismic": [
+        (0.00, (0, 0, 76)),
+        (0.25, (0, 0, 255)),
+        (0.50, (255, 255, 255)),
+        (0.75, (255, 0, 0)),
+        (1.00, (76, 0, 0)),
+    ],
+    "viridis": [
+        (0.00, (68, 1, 84)),
+        (0.25, (59, 82, 139)),
+        (0.50, (33, 145, 140)),
+        (0.75, (94, 201, 98)),
+        (1.00, (253, 231, 37)),
+    ],
+    "plasma": [
+        (0.00, (13, 8, 135)),
+        (0.25, (126, 3, 168)),
+        (0.50, (204, 71, 120)),
+        (0.75, (248, 149, 64)),
+        (1.00, (240, 249, 33)),
+    ],
+    "magma": [
+        (0.00, (0, 0, 4)),
+        (0.25, (80, 18, 123)),
+        (0.50, (182, 54, 121)),
+        (0.75, (251, 136, 97)),
+        (1.00, (252, 253, 191)),
+    ],
+    "inferno": [
+        (0.00, (0, 0, 4)),
+        (0.25, (87, 15, 109)),
+        (0.50, (187, 55, 84)),
+        (0.75, (249, 142, 8)),
+        (1.00, (252, 255, 164)),
+    ],
+    "turbo": [
+        (0.00, (48, 18, 59)),
+        (0.15, (50, 101, 220)),
+        (0.35, (26, 199, 194)),
+        (0.55, (141, 235, 70)),
+        (0.75, (254, 194, 37)),
+        (1.00, (122, 4, 3)),
+    ],
+    "gray": [
+        (0.00, (0, 0, 0)),
+        (1.00, (255, 255, 255)),
+    ],
+}
 
 
 def _append_axis_tick_stubs(axis_item: pg.AxisItem, tick_specs, bounds, tick_levels) -> None:
@@ -165,21 +235,114 @@ class LogFrequencyAxis(pg.AxisItem):
         return labels
 
 
+def _fallback_colormap(name: str) -> pg.ColorMap:
+    key = str(name).strip().lower()
+    if key == "grey":
+        key = "gray"
+    anchors = _FALLBACK_COLORMAPS.get(key, _FALLBACK_COLORMAPS["jet"])
+    positions = [position for position, _color in anchors]
+    colors = [color for _position, color in anchors]
+    return pg.ColorMap(positions, colors, name=key)
+
+
+def _coerce_colormap(candidate: object) -> pg.ColorMap | None:
+    if isinstance(candidate, pg.ColorMap):
+        return candidate
+    return None
+
+
+def _get_matplotlib_cmap(name: str):
+    try:
+        import matplotlib
+    except Exception:
+        return None
+
+    try:
+        registry = getattr(matplotlib, "colormaps", None)
+        if registry is not None:
+            return registry[name]
+    except Exception:
+        pass
+
+    try:
+        import matplotlib.cm as mpl_cm
+        return mpl_cm.get_cmap(name)
+    except Exception:
+        return None
+
+
+def _matplotlib_colormap(name: str) -> pg.ColorMap | None:
+    col_map = _get_matplotlib_cmap(name)
+    if col_map is None:
+        return None
+
+    color_map: pg.ColorMap | None = None
+    if hasattr(col_map, "_segmentdata"):
+        data = col_map._segmentdata
+        if ("red" in data) and isinstance(data["red"], (Sequence, np.ndarray)):
+            positions = set()
+            for key in ("red", "green", "blue"):
+                for item in data[key]:
+                    positions.add(item[0])
+
+            col_data = np.zeros((len(positions), 4), dtype=np.float64)
+            col_data[:, -1] = sorted(positions)
+            for index, key in enumerate(("red", "green", "blue")):
+                channel_positions = np.zeros(len(data[key]), dtype=np.float64)
+                channel_values = np.zeros(len(data[key]), dtype=np.float64)
+                for item_index, item in enumerate(data[key]):
+                    channel_positions[item_index] = item[0]
+                    channel_values[item_index] = item[1]
+                col_data[:, index] = np.interp(col_data[:, 3], channel_positions, channel_values)
+            color_map = pg.ColorMap(pos=col_data[:, 3], color=(255 * col_data[:, :3]) + 0.5)
+        elif ("red" in data) and isinstance(data["red"], Callable):
+            col_data = np.zeros((64, 4), dtype=np.float64)
+            col_data[:, -1] = np.linspace(0.0, 1.0, 64)
+            for index, key in enumerate(("red", "green", "blue")):
+                col_data[:, index] = np.clip(data[key](col_data[:, -1]), 0.0, 1.0)
+            color_map = pg.ColorMap(pos=col_data[:, 3], color=(255 * col_data[:, :3]) + 0.5)
+    elif hasattr(col_map, "colors"):
+        try:
+            from matplotlib.colors import to_rgba_array
+            col_data = np.asarray(to_rgba_array(col_map.colors), dtype=np.float64)
+        except Exception:
+            col_data = np.asarray(col_map.colors, dtype=np.float64)
+        if col_data.ndim == 2 and col_data.shape[0] > 0 and col_data.shape[1] >= 3:
+            color_map = pg.ColorMap(
+                name=name,
+                pos=np.linspace(0.0, 1.0, col_data.shape[0]),
+                color=(255 * col_data[:, :3]) + 0.5,
+            )
+
+    if color_map is not None:
+        color_map.name = name
+    return color_map
+
+
 def create_colormap(name: str) -> pg.ColorMap:
     cmap_name = str(name).strip()
     if not cmap_name:
         cmap_name = "jet"
+
+    fallback = _fallback_colormap(cmap_name)
     try:
-        return pg.colormap.get(cmap_name, source="matplotlib")
+        color_map = _coerce_colormap(pg.colormap.get(cmap_name, source="matplotlib"))
+        if color_map is not None:
+            return color_map
     except Exception:
         pass
+
+    color_map = _matplotlib_colormap(cmap_name)
+    if color_map is not None:
+        return color_map
+
     try:
-        return pg.colormap.get(cmap_name)
+        color_map = _coerce_colormap(pg.colormap.get(cmap_name))
+        if color_map is not None:
+            return color_map
     except Exception:
-        try:
-            return pg.colormap.get("jet", source="matplotlib")
-        except Exception:
-            return pg.colormap.get("CET-L4")
+        pass
+    return fallback
 
 
 def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_label: str) -> None:
