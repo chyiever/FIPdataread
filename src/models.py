@@ -55,10 +55,10 @@ class LoadedWaveform:
         if not self.channels:
             self.channels = (self.phase_data,)
         if not self.channel_names:
-            self.channel_names = tuple(f"Channel {index + 1}" for index in range(len(self.channels)))
+            self.channel_names = tuple(f"CH{index + 1}" for index in range(len(self.channels)))
         elif len(self.channel_names) < len(self.channels):
             names = list(self.channel_names)
-            names.extend(f"Channel {index + 1}" for index in range(len(names), len(self.channels)))
+            names.extend(f"CH{index + 1}" for index in range(len(names), len(self.channels)))
             self.channel_names = tuple(names)
 
     @property
@@ -71,7 +71,7 @@ class LoadedWaveform:
         raise IndexError(f"Channel index out of range: {channel_index}")
 
     def channel_label(self, channel_index: int) -> str:
-        base_label = f"Channel {channel_index + 1}"
+        base_label = f"CH{channel_index + 1}"
         if 0 <= channel_index < len(self.channel_names):
             name = str(self.channel_names[channel_index]).strip()
             if name and name != base_label:

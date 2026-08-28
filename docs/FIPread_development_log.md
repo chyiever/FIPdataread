@@ -2,6 +2,52 @@
 
 Purpose: keep a simple long-term update log for this project.
 
+## 2026-08-29
+- Restored the shared top time-domain panel for both `1D Curve` and `t-f Plot`; switching to `t-f Plot` no longer hides the Zoom/PSD toolbar or replaces it with a standalone `CH` row.
+- Moved the t-f `CH` selector back to the main toolbar between `PSD` and `Plot 2`, and kept it as the source selector for both the top time plot and the time-frequency map.
+- Changed Plot 2 to use the same interactive time-plot widget as Plot 1, with bidirectional X-axis synchronization:
+  - Dragging, rectangular zoom, reset, undo, visible-window application, and 2x zoom-out now keep Plot 1 and Plot 2 aligned in time.
+  - Fixed PSD selection regions are mirrored on both time-domain plots.
+- Added `CH1` and `CH2` waveform options to `Plot 2`; two-channel files default to `CH2`, while single-channel files switch to `None` and collapse Plot 2 height to zero.
+- Set the Plot 1 / Plot 2 splitter to equal heights when Plot 2 is visible.
+- Updated toolbar labels:
+  - `Zoom Mode` -> `矩形放大`
+  - `Window PSD Mode` -> `计算PSD`
+  - `Back View` -> `撤销放大`
+  - `PSD WINDOWS` -> `固定PSD窗`
+  - `Zoom Out 2x` -> `缩小2倍`
+  - `Reset View` -> `重置窗口`
+  - `Apply Visible Window` -> `应用窗宽`
+- Switched the application font to `Times New Roman` for controls and reduced the left control-tab width while keeping tab text visible.
+- Combined file management, file list, display controls, short-time feature controls, and audio controls into one left-side tab group: `Flie List`, `Display`, `ST-feature`, and `Audio`.
+- Reduced the t-f colorbar alignment width and stopped resetting the right vertical splitter on analysis-tab changes, improving full-screen switching between `1D Curve` and `t-f Plot`.
+
+## 2026-08-28
+- Added TXT waveform input compatibility for files such as `20260820170538.780_SemiPhase_1000k.txt`.
+- The file list now includes `.txt` together with `.npz` and `.tdms`.
+- TXT loading supports one or two numeric columns; each column is mapped to one waveform channel and stored in `LoadedWaveform.channels`.
+- `LoadedWaveform.phase_data` remains column/CH1 so existing first-channel workflows continue unchanged.
+- Extended filename parsing to support compact start-time tokens like `YYYYMMDDHHMMSS.fff` and sample-rate tokens at the end of the file stem such as `_1000k`.
+- Added `TXT` to the visible raw data export-format dropdown and implemented single-column txt export for the current visible CH1 segment.
+- Updated README and data-structure documentation for TXT read/export behavior.
+- Problem solved: txt captures with one or two columns can be opened from the normal file list, carry filename-derived start time/sample rate metadata, and participate in the existing two-channel plot/PSD workflows.
+- Added PSD X-axis range controls in `Display Controls`.
+  - `PSD X Min (Hz)` and `PSD X Max (Hz)` use `0 / 0` as the automatic range, otherwise values are applied in Hz and clamped to the current file Nyquist frequency.
+  - The existing range apply button is now labeled `Apply Ranges` and applies phase Y, PSD X/Y, feature Y, t-f Y, and t-f color ranges.
+  - Added a PSD-specific log-frequency bottom axis. When the visible PSD X range spans at least one decade, only powers of ten are labeled, for example `100Hz`, `1000Hz`, and `10000Hz`.
+- Problem solved: users can inspect a chosen PSD frequency band without dense intermediate tick labels crowding the logarithmic frequency axis.
+- Added a compact `CH` dropdown with `CH1` and `CH2` for the `t-f Plot` tab.
+  - CH2 is enabled only when the loaded file has at least two channels.
+  - Switching the t-f source recomputes the time-frequency map from the selected channel using the same display filter settings.
+  - The t-f plot status message now reports the selected channel label.
+- Problem solved: two-channel TDMS/TXT files can compare time-frequency behavior by channel from the `t-f Plot` tab selector.
+- Changed the Plot 2 `CH2 Waveform` left-axis label from `CH2 Phase (rad)` to `Phase (rad)` so the second time-domain waveform keeps the same Y-axis label as the first time-domain plot.
+- The `t-f Plot` tab now owns a single internal time-domain plot above the t-f image; the external top time-domain panel is collapsed on this tab.
+- Removed the extra margins around the `t-f Plot` content, collapsed the hidden external time-domain panel to zero height, and changed tab-specific right-panel splitter sizing:
+  - `1D Curve`: keeps the taller time-domain panel and lower Plot 2 / PSD analysis area.
+  - `t-f Plot`: uses a smaller single time-domain panel and gives the remaining height to the t-f image.
+- Problem solved: the `t-f Plot` view shows only one time-domain plot, no longer leaves unnecessary blank space under the hidden external panel, and the single visible time-domain plot has a compact CH1/CH2 switch.
+
 ## 2026-03-26 14:00
 - Added threshold filtering workflow for file list.
 - Increased page size and improved paging UX.
@@ -104,11 +150,11 @@ Purpose: keep a simple long-term update log for this project.
 - Moved the generated `.ico` file out of the cleaned build directory so PyInstaller can still find it during the final exe assembly step.
 - Added compatibility for TDMS files named like `SemiPhase-1MHz-2026-8-1-12-43-36.tdms`.
 - Extended filename parsing to support `K/KHz/M/MHz` sample-rate tokens and `YYYY-M-D-H-M-S` start-time tokens.
-- Extended `LoadedWaveform` to retain all TDMS channels while preserving `phase_data` as channel 1 for existing first-channel workflows.
-- Added `Channel 2 Waveform` to the Plot 2 dropdown; it applies the same display filter preprocessing as channel 1.
-- Added a PSD source dropdown with `Channel 1`, `Channel 2`, and `Both Channels`; channel 1 remains the default for all files.
+- Extended `LoadedWaveform` to retain all TDMS channels while preserving `phase_data` as CH1 for existing first-channel workflows.
+- Added `CH2 Waveform` to the Plot 2 dropdown; it applies the same display filter preprocessing as CH1.
+- Added a PSD source dropdown with `CH1`, `CH2`, and `CH1+CH2`; CH1 remains the default for all files.
 - Updated README and data-structure documentation for the new TDMS dual-channel behavior.
-- Problem solved: two-channel TDMS files can now be inspected without losing the existing first-channel workflows, and PSD comparison between channel 1 and channel 2 is available from the UI.
+- Problem solved: two-channel TDMS files can now be inspected without losing the existing first-channel workflows, and PSD comparison between CH1 and CH2 is available from the UI.
 - Problem solved: FIPread now has a repeatable exe packaging workflow that keeps historical builds while cleaning temporary packaging artifacts.
 
 ## 2026-08-14

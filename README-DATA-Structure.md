@@ -1,5 +1,57 @@
 # DATA Structure README
 
+## Current TXT Compatibility
+
+FIPread now supports numeric `.txt` waveform files such as:
+
+```text
+20260820170538.780_SemiPhase_1000k.txt
+```
+
+### TXT Data Layout
+
+- The file must contain one or two numeric columns.
+- One column means one waveform channel.
+- Two columns means two waveform channels; each column is one channel.
+- Values are loaded as `float64` one-dimensional arrays.
+- `LoadedWaveform.phase_data` remains CH1 for backward compatibility.
+- `LoadedWaveform.channels` stores all loaded txt columns in order.
+- Whitespace-separated and comma-separated numeric columns are supported.
+- Lines beginning with `#` are treated as comments by the NumPy text loader.
+
+### TXT Filename Parsing
+
+For `.txt`, both start time and sample rate are parsed from the file name.
+
+Supported start-time tokens include:
+
+- `YYYYMMDDHHMMSS`
+- `YYYYMMDDHHMMSS.fff...`, for example `20260820170538.780`
+- the existing shared formats `YYYYMMDDTHHMMSS`, `YYYYMMDDTHHMMSS.fff...`, and `YYYY-M-D-H-M-S`
+
+Supported sample-rate tokens include:
+
+- `-<rate>K-`, `_<rate>k_`, or a rate token at the end of the stem, for example `_1000k`
+- `K`, `KHz`, `M`, and `MHz` units, case-insensitive
+
+For the sample name above:
+
+```text
+sample_rate: 1000000 Hz
+start_time: 2026-08-20 17:05:38.780
+```
+
+If the sample-rate token is missing, loading fails with `Cannot determine sample rate from file name`.
+If no supported start-time token is present, file modification time is used as the fallback.
+
+### UI Behavior For TXT
+
+- `.txt` is included in the readable file list together with `.npz` and `.tdms`.
+- The export-format dropdown now includes `TXT` in addition to `NPZ` and `TDMS`.
+- Two-column txt files can use `CH2 Waveform` in Plot 2, CH2 / CH1+CH2 PSD, and CH2 t-f analysis, the same as two-channel TDMS files.
+- Existing CH1 workflows still use column 1: visible raw export, audio playback/export, SVM prediction, and short-time energy.
+- The top-row `CH` dropdown switches the visible top time plot and the t-f plot between CH1 and CH2.
+
 ## Current TDMS Dual-Channel Compatibility
 
 This section records the current TDMS compatibility rules for files such as:
@@ -12,7 +64,7 @@ SemiPhase-1MHz-2026-8-1-12-43-36.tdms
 
 - The loader scans the first TDMS group that contains channels.
 - All channels in that group are loaded as `float64` one-dimensional arrays.
-- `LoadedWaveform.phase_data` remains channel 1 for backward compatibility.
+- `LoadedWaveform.phase_data` remains CH1 for backward compatibility.
 - `LoadedWaveform.channels` stores every loaded channel in TDMS order.
 - `LoadedWaveform.channel_names` stores TDMS channel names in the same order.
 - `LoadedWaveform.channel_count` reports the number of loaded channels.
@@ -21,8 +73,8 @@ For the sample file above:
 
 ```text
 group: Data
-channel 1: Untitled
-channel 2: Untitled 1
+CH1: Untitled
+CH2: Untitled 1
 sample_rate: 1000000 Hz
 start_time: 2026-08-01 12:43:36
 ```
@@ -46,22 +98,23 @@ If no supported time token is present, file modification time is still used as t
 
 ### UI Behavior For Two-Channel TDMS
 
-- The top time-domain plot always displays channel 1 by default.
-- Plot 2 can select `Channel 2 Waveform` from the `Plot 2` dropdown.
-- Plot 2 channel 2 waveform uses the same display filter preprocessing as channel 1.
-- The PSD dropdown supports `Channel 1`, `Channel 2`, and `Both Channels`.
-- PSD defaults to `Channel 1` for both one-channel and two-channel TDMS files.
-- When a single-channel file is loaded, channel 2 and both-channel PSD options are disabled.
+- The top time-domain plot displays CH1 by default and can switch to CH2 from the top-row `CH` dropdown.
+- Plot 2 can select `CH2 Waveform` from the `Plot 2` dropdown.
+- Plot 2 CH2 waveform uses the same display filter preprocessing as CH1.
+- The PSD dropdown supports `CH1`, `CH2`, and `CH1+CH2`.
+- PSD defaults to `CH1` for both one-channel and two-channel TDMS files.
+- The top-row `CH` dropdown supports `CH1` and `CH2`.
+- The t-f plot defaults to `CH1` and recomputes from the selected channel when switched.
+- When a single-channel file is loaded, CH2 and CH1+CH2 PSD options are disabled.
 
-### Behaviors That Remain Channel 1
+### Behaviors That Remain CH1
 
-The following existing workflows still use channel 1:
+The following existing workflows still use CH1:
 
 - visible raw data export
 - audio playback and audio export
 - SVM prediction
 - short-time energy
-- t-f plot
 
 本文档描述 FIPread 当前版本的数据读取与导出结构（对应代码：`src/data_access.py`、`src/main_window.py`、`src/processing.py`）。
 

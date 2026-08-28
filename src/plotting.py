@@ -235,6 +235,28 @@ class LogFrequencyAxis(pg.AxisItem):
         return labels
 
 
+class LogPowerFrequencyAxis(pg.AxisItem):
+    def __init__(self, orientation: str = "bottom") -> None:
+        super().__init__(orientation=orientation)
+        self.setStyle(
+            tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
+            tickTextOffset=8,
+            tickLength=8,
+        )
+        self.setPen(pg.mkPen("k"))
+        self.setTextPen(pg.mkPen("k"))
+
+    def tickStrings(self, values, scale, spacing):
+        labels: list[str] = []
+        for value in values:
+            frequency = 10.0 ** float(value)
+            if abs(frequency - round(frequency)) < max(1e-9, frequency * 1e-9):
+                labels.append(f"{int(round(frequency))}")
+            else:
+                labels.append(f"{frequency:g}")
+        return labels
+
+
 def _fallback_colormap(name: str) -> pg.ColorMap:
     key = str(name).strip().lower()
     if key == "grey":

@@ -13,6 +13,7 @@ from models import FileRecord, LoadedWaveform, PagedFiles, SortField
 
 
 TIME_TOKEN_RE = re.compile(r"(?P<stamp>\d{8}T\d{6}(?:\.\d{1,6})?)")
+COMPACT_TIME_TOKEN_RE = re.compile(r"(?P<stamp>\d{14}(?:\.\d{1,6})?)")
 FILENAME_DATE_TOKEN_RE = re.compile(
     r"(?P<year>\d{4})[-_](?P<month>\d{1,2})[-_](?P<day>\d{1,2})"
     r"[-_](?P<hour>\d{1,2})[-_](?P<minute>\d{1,2})[-_](?P<second>\d{1,2})"
@@ -22,7 +23,7 @@ SAMPLE_RATE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 ARRIVAL_TIME_TOKEN_RE = re.compile(r"(?P<stamp>\d{14}(?:\.\d{1,6})?)")
-SUPPORTED_SUFFIXES = {".npz", ".tdms"}
+SUPPORTED_SUFFIXES = {".npz", ".tdms", ".txt"}
 
 
 def format_start_time_token(start_time: datetime) -> str:
@@ -47,6 +48,10 @@ def build_export_tdms_name(start_time: datetime, sample_rate: float) -> str:
 
 def build_export_npz_name(start_time: datetime, sample_rate: float) -> str:
     return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.npz"
+
+
+def build_export_txt_name(start_time: datetime, sample_rate: float) -> str:
+    return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.txt"
 
 
 def build_export_wav_name(start_time: datetime, sample_rate: float) -> str:
@@ -124,6 +129,14 @@ def save_npz_waveform(
     return destination
 
 
+def save_txt_waveform(path: Path, phase_data: np.ndarray) -> Path:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    values = np.asarray(phase_data, dtype=np.float64).reshape(-1)
+    np.savetxt(destination, values, fmt="%.18e")
+    return destination
+
+
 def save_wav_waveform(path: Path, phase_data: np.ndarray, sample_rate: float) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +156,16 @@ def parse_start_time_from_name(path: Path) -> datetime:
             return datetime.strptime(value, "%Y%m%dT%H%M%S.%f")
         return datetime.strptime(value, "%Y%m%dT%H%M%S")
 
+    compact_match = COMPACT_TIME_TOKEN_RE.search(path.name)
+    if compact_match:
+        value = compact_match.group("stamp")
+        if "." in value:
+            main, frac = value.split(".", 1)
+            frac = (frac + "000000")[:6]
+            value = f"{main}.{frac}"
+            return datetime.strptime(value, "%Y%m%d%H%M%S.%f")
+        return datetime.strptime(value, "%Y%m%d%H%M%S")
+
     date_match = FILENAME_DATE_TOKEN_RE.search(path.name)
     if date_match:
         return datetime(
@@ -158,7 +181,7 @@ def parse_start_time_from_name(path: Path) -> datetime:
 
 
 def parse_sample_rate_from_name(path: Path) -> float:
-    match = SAMPLE_RATE_TOKEN_RE.search(path.name)
+    match = SAMPLE_RATE_TOKEN_RE.search(path.stem)
     if not match:
         raise ValueError(f"Cannot determine sample rate from file name: {path.name}")
     unit = match.group("unit").lower()
@@ -349,7 +372,7 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
         for channel in selected_channels
     )
     channel_names = tuple(
-        str(channel.name).strip() or f"Channel {index + 1}"
+        str(channel.name).strip() or f"CH{index + 1}"
         for index, channel in enumerate(selected_channels)
     )
     phase_data = channel_arrays[0]
@@ -377,6 +400,58 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
     )
 
 
+def _read_txt_array(path: Path) -> np.ndarray:
+    errors: list[str] = []
+    for delimiter in (None, ","):
+        try:
+            return np.loadtxt(path, dtype=np.float64, comments="#", delimiter=delimiter, ndmin=2)
+        except ValueError as exc:
+            errors.append(str(exc))
+    raise ValueError(f"Cannot read TXT numeric columns from {path.name}: {'; '.join(errors)}")
+
+
+def _load_txt_waveform(path: Path) -> LoadedWaveform:
+    values = np.asarray(_read_txt_array(path), dtype=np.float64)
+    if values.size == 0:
+        raise ValueError(f"TXT file contains no numeric samples: {path.name}")
+
+    if values.ndim == 1:
+        channel_arrays = (values.reshape(-1),)
+    elif values.ndim == 2:
+        if values.shape[1] not in (1, 2):
+            raise ValueError(
+                f"TXT file must contain one or two numeric columns, got {values.shape[1]} columns: {path.name}"
+            )
+        channel_arrays = tuple(values[:, index].reshape(-1) for index in range(values.shape[1]))
+    else:
+        raise ValueError(f"TXT file must be a one- or two-column numeric table: {path.name}")
+
+    phase_data = channel_arrays[0]
+    sample_rate = parse_sample_rate_from_name(path)
+    start_time = parse_start_time_from_name(path)
+    channel_names = tuple(f"txt_column_{index + 1}" for index in range(len(channel_arrays)))
+    return LoadedWaveform(
+        path=path,
+        phase_data=phase_data,
+        sample_rate=sample_rate,
+        comm_count=int(phase_data.size),
+        timestamp=start_time.timestamp(),
+        start_time=start_time,
+        data_info={
+            "source_format": "txt",
+            "column_count": len(channel_arrays),
+            "channel_names": channel_names,
+            "filename_sample_rate": sample_rate,
+            "filename_start_time": start_time.isoformat(timespec="milliseconds"),
+        },
+        data_info_warning=None,
+        arrival_time=None,
+        sample_type=None,
+        channels=channel_arrays,
+        channel_names=channel_names,
+    )
+
+
 def load_waveform(path: Path) -> LoadedWaveform:
     path = Path(path)
     suffix = path.suffix.lower()
@@ -384,4 +459,6 @@ def load_waveform(path: Path) -> LoadedWaveform:
         return _load_npz_waveform(path)
     if suffix == ".tdms":
         return _load_tdms_waveform(path)
+    if suffix == ".txt":
+        return _load_txt_waveform(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")

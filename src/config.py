@@ -16,6 +16,8 @@ class DisplayPanelDefaults:
     high_cut_hz: float = 50000.0
     phase_y_min: float = 0.0
     phase_y_max: float = 0.0
+    psd_x_min_hz: float = 0.0
+    psd_x_max_hz: float = 0.0
     psd_y_min: int = -120
     psd_y_max: int = -45
 
