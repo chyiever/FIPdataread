@@ -298,7 +298,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tf_color_min_user_override = False
         self._updating_tf_color_spins = False
         self._clamping_time_x_range = False
-        self._tf_side_panel_width = 104
+        self._tf_side_panel_width = 88
         self._arrival_line: Optional[pg.InfiniteLine] = None
         self._arrival_sample_index: Optional[float] = None
         self._arrival_time: Optional[datetime] = None
@@ -670,7 +670,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         control_tabs = QtWidgets.QTabWidget()
         control_tabs.setObjectName("controlTabs")
-        control_tabs.addTab(file_tab, "Flie List")
+        control_tabs.addTab(file_tab, "File")
         control_tabs.addTab(filter_group, "Display")
         control_tabs.addTab(feature_group, "ST-feature")
         control_tabs.addTab(audio_group, "Audio")
@@ -845,7 +845,7 @@ class MainWindow(QtWidgets.QMainWindow):
         curve_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         curve_splitter.addWidget(self.feature_plot)
         curve_splitter.addWidget(self.psd_plot)
-        curve_splitter.setSizes([270, 270])
+        curve_splitter.setSizes([270, 540])
         self._curve_splitter = curve_splitter
         curve_tab_layout.addWidget(curve_splitter)
         tf_tab = QtWidgets.QWidget()
@@ -861,8 +861,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.analysis_tabs.addTab(tf_tab, "t-f Plot")
         right_panel.addWidget(time_panel)
         right_panel.addWidget(self.analysis_tabs)
-        right_panel.setSizes([360, 540])
         self._right_panel_splitter = right_panel
+        self._apply_right_plot_splitter_sizes()
         self._update_time_tf_alignment_for_tab(self.analysis_tabs.currentIndex())
         self.tf_color_min_spin.setEnabled(False)
         self.tf_color_max_spin.setEnabled(False)
@@ -1196,9 +1196,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_time_frequency_color_levels()
 
     def _update_time_tf_alignment_for_tab(self, index: int) -> None:
-        target_width = self._tf_side_panel_width if int(index) == 1 else 0
-        self.time_right_spacer.setMinimumWidth(target_width)
-        self.time_right_spacer.setMaximumWidth(target_width)
+        self.time_right_spacer.setMinimumWidth(0)
+        self.time_right_spacer.setMaximumWidth(0)
+        self._apply_right_plot_splitter_sizes()
+        self.analysis_tabs.updateGeometry()
+        self.tf_plot.updateGeometry()
+        self.tf_histogram.updateGeometry()
         if int(index) == 1:
             self._sync_tf_x_from_time()
 
@@ -2554,7 +2557,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._current_feature_mode() == FEATURE_MODE_NONE:
             splitter.setSizes([0, 540])
         else:
-            splitter.setSizes([270, 270])
+            splitter.setSizes([270, 540])
+        self._apply_right_plot_splitter_sizes()
+
+    def _apply_right_plot_splitter_sizes(self) -> None:
+        right_panel = getattr(self, "_right_panel_splitter", None)
+        if right_panel is None:
+            return
+        if self.analysis_tabs.currentIndex() == 1:
+            right_panel.setSizes([320, 640])
+        elif self._current_feature_mode() == FEATURE_MODE_NONE:
+            right_panel.setSizes([320, 640])
+        else:
+            right_panel.setSizes([320, 960])
 
     def _set_interaction_mode(self, mode: InteractionMode) -> None:
         self.time_plot.set_interaction_mode(mode)

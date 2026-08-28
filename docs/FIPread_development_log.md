@@ -3,6 +3,11 @@
 Purpose: keep a simple long-term update log for this project.
 
 ## 2026-08-29
+- Refined the right plotting splitter ratios for two-channel 1D analysis:
+  - Plot 1 / Plot 2 / PSD now use a 1:1:2 height ratio when Plot 2 is visible.
+  - Plot 2 remains collapsed when the current file has only one channel and Plot 2 is `None`.
+- Renamed the left-side file tab from `Flie List` to `File`.
+- Optimized full-screen switching from `1D Curve` to `t-f Plot` by removing the fixed top-panel right spacer and narrowing the t-f colorbar to reduce right-edge clipping.
 - Restored the shared top time-domain panel for both `1D Curve` and `t-f Plot`; switching to `t-f Plot` no longer hides the Zoom/PSD toolbar or replaces it with a standalone `CH` row.
 - Moved the t-f `CH` selector back to the main toolbar between `PSD` and `Plot 2`, and kept it as the source selector for both the top time plot and the time-frequency map.
 - Changed Plot 2 to use the same interactive time-plot widget as Plot 1, with bidirectional X-axis synchronization:
