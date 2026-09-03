@@ -241,10 +241,23 @@ class LogPowerFrequencyAxis(pg.AxisItem):
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
             tickTextOffset=8,
-            tickLength=8,
+            tickLength=-8,
         )
         self.setPen(pg.mkPen("k"))
         self.setTextPen(pg.mkPen("k"))
+
+    def generateDrawSpecs(self, p):
+        specs = super().generateDrawSpecs(p)
+        if specs is None or self.grid is False or self.orientation != "bottom":
+            return specs
+
+        axis_spec, tick_specs, text_specs = specs
+        bounds = self.mapRectFromParent(self.geometry())
+        tick_levels = _manual_tick_levels(self, bounds)
+        if tick_levels is None:
+            return specs
+        _append_axis_tick_stubs(self, tick_specs, bounds, tick_levels)
+        return axis_spec, tick_specs, text_specs
 
     def tickStrings(self, values, scale, spacing):
         labels: list[str] = []

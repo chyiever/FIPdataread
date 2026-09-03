@@ -299,6 +299,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._updating_tf_color_spins = False
         self._clamping_time_x_range = False
         self._tf_side_panel_width = 88
+        self._tf_time_axis_compensation = 102
         self._arrival_line: Optional[pg.InfiniteLine] = None
         self._arrival_sample_index: Optional[float] = None
         self._arrival_time: Optional[datetime] = None
@@ -319,6 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout = QtWidgets.QVBoxLayout(central)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(8)
+        main_layout.setSizeConstraint(QtWidgets.QLayout.SetNoConstraint)
 
         header_layout = QtWidgets.QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -727,6 +729,7 @@ class MainWindow(QtWidgets.QMainWindow):
         mode_row.addWidget(self.fixed_psd_button)
         mode_row.addWidget(self.zoom_out_button)
         mode_row.addWidget(self.reset_view_button)
+        mode_row.addStretch(1)
         self.visible_length_label = QtWidgets.QLabel("Visible: 0.000 s")
         self.window_length_label = QtWidgets.QLabel("Window: 0.000 s")
         self.visible_window_spin = QtWidgets.QDoubleSpinBox()
@@ -735,7 +738,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.visible_window_spin.setSingleStep(0.001)
         self.visible_window_spin.setValue(UI_DEFAULTS.view.visible_window_seconds)
         self.apply_visible_window_button = QtWidgets.QPushButton("应用窗宽")
-        self.apply_visible_window_button.setMinimumWidth(72)
+        self.apply_visible_window_button.setMinimumWidth(64)
         self.apply_visible_window_button.setMaximumWidth(96)
         self.feature_plot_mode_combo = QtWidgets.QComboBox()
         self.feature_plot_mode_combo.addItem("None", FEATURE_MODE_NONE)
@@ -755,24 +758,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_scrollbar.setEnabled(False)
         self.time_scrollbar.setSingleStep(1)
         self.time_scrollbar.setPageStep(1)
-        mode_row.addSpacing(4)
-        mode_row.addWidget(self.visible_length_label)
-        mode_row.addSpacing(4)
-        mode_row.addWidget(self.window_length_label)
-        mode_row.addSpacing(4)
-        mode_row.addWidget(QtWidgets.QLabel("窗宽(s)"))
-        mode_row.addWidget(self.visible_window_spin)
-        mode_row.addWidget(self.apply_visible_window_button)
-        mode_row.addSpacing(6)
-        mode_row.addWidget(QtWidgets.QLabel("PSD"))
-        mode_row.addWidget(self.psd_source_combo)
-        mode_row.addSpacing(6)
-        mode_row.addWidget(QtWidgets.QLabel("CH"))
-        mode_row.addWidget(self.tf_source_combo)
-        mode_row.addSpacing(6)
-        mode_row.addWidget(QtWidgets.QLabel("Plot 2"))
-        mode_row.addWidget(self.feature_plot_mode_combo)
-        mode_row.addStretch(1)
+        info_row = QtWidgets.QHBoxLayout()
+        info_row.setSpacing(3)
+        info_row.addSpacing(4)
+        info_row.addWidget(self.visible_length_label)
+        info_row.addSpacing(4)
+        info_row.addWidget(self.window_length_label)
+        info_row.addSpacing(4)
+        info_row.addWidget(QtWidgets.QLabel("窗宽(s)"))
+        info_row.addWidget(self.visible_window_spin)
+        info_row.addWidget(self.apply_visible_window_button)
+        info_row.addSpacing(6)
+        info_row.addWidget(QtWidgets.QLabel("PSD"))
+        info_row.addWidget(self.psd_source_combo)
+        info_row.addSpacing(6)
+        info_row.addWidget(QtWidgets.QLabel("CH"))
+        info_row.addWidget(self.tf_source_combo)
+        info_row.addSpacing(6)
+        info_row.addWidget(QtWidgets.QLabel("Plot 2"))
+        info_row.addWidget(self.feature_plot_mode_combo)
+        info_row.addStretch(1)
         psd_axis = LogPowerFrequencyAxis("bottom")
         self.psd_plot = pg.PlotWidget(axisItems={"bottom": psd_axis})
         tf_axis = AbsoluteTimeAxis("bottom")
@@ -794,6 +799,8 @@ class MainWindow(QtWidgets.QMainWindow):
         tf_left_axis.setWidth(aligned_left_axis_width)
         tf_left_axis.setStyle(tickLength=8, maxTickLevel=1, maxTextLevel=0, tickAlpha=255, showValues=True)
         self.psd_plot.setLogMode(x=True, y=False)
+        self.psd_plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
+        self.psd_plot.getViewBox().setMouseEnabled(x=True, y=True)
         self.tf_plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
         self.tf_plot.getViewBox().setMouseEnabled(x=True, y=True)
         self.time_curve = self.time_plot.plot(pen=make_pen("#CC2222", 1))
@@ -830,6 +837,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tf_histogram.setMinimumWidth(self._tf_side_panel_width)
         self.tf_histogram.setMaximumWidth(self._tf_side_panel_width)
         time_column_layout.addLayout(mode_row)
+        time_column_layout.addLayout(info_row)
         time_column_layout.addWidget(self.time_plot, stretch=1)
         time_column_layout.addWidget(self.time_scrollbar)
         time_layout.addLayout(time_column_layout, stretch=1)
@@ -898,8 +906,11 @@ class MainWindow(QtWidgets.QMainWindow):
         preferred_width = 1500
         preferred_height = 920
         available = QtWidgets.QApplication.primaryScreen().availableGeometry()
-        width = min(preferred_width, max(800, available.width()))
-        height = min(preferred_height, max(600, available.height()))
+        frame_border = 24
+        frame_title = 40
+        width = min(preferred_width, max(800, available.width() - frame_border))
+        height = min(preferred_height, max(600, available.height() - frame_title))
+        self.setMinimumSize(800, 600)
         self.resize(width, height)
         main_splitter = getattr(self, "_main_splitter", None)
         if main_splitter is not None:
@@ -1196,8 +1207,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_time_frequency_color_levels()
 
     def _update_time_tf_alignment_for_tab(self, index: int) -> None:
-        self.time_right_spacer.setMinimumWidth(0)
-        self.time_right_spacer.setMaximumWidth(0)
+        if int(index) == 1:
+            self.time_right_spacer.setMinimumWidth(self._tf_time_axis_compensation)
+            self.time_right_spacer.setMaximumWidth(self._tf_time_axis_compensation)
+        else:
+            self.time_right_spacer.setMinimumWidth(0)
+            self.time_right_spacer.setMaximumWidth(0)
         self._apply_right_plot_splitter_sizes()
         self.analysis_tabs.updateGeometry()
         self.tf_plot.updateGeometry()
@@ -1387,14 +1402,16 @@ class MainWindow(QtWidgets.QMainWindow):
         x_range, _ = self.time_plot.getViewBox().viewRange()
         start_x, end_x = self._normalized_x_range((float(x_range[0]), float(x_range[1])))
         start_index = max(0, int(np.floor(start_x)))
-        end_index = min(self._current_waveform.phase_data.size, int(np.ceil(end_x)))
+        channel_sample_count = min(channel.size for channel in self._current_waveform.channels)
+        end_index = min(channel_sample_count, int(np.ceil(end_x)))
         if end_index <= start_index:
-            end_index = min(self._current_waveform.phase_data.size, start_index + 1)
+            end_index = min(channel_sample_count, start_index + 1)
         if end_index <= start_index:
             self.statusBar().showMessage('Visible window is empty.')
             return
 
-        segment = self._current_waveform.phase_data[start_index:end_index]
+        segment_channels = tuple(channel[start_index:end_index] for channel in self._current_waveform.channels)
+        segment = segment_channels[0] if len(segment_channels) == 1 else segment_channels
         segment_start_time = self._current_waveform.start_time + timedelta(
             seconds=start_index / self._current_waveform.sample_rate
         )
@@ -2569,7 +2586,15 @@ class MainWindow(QtWidgets.QMainWindow):
         elif self._current_feature_mode() == FEATURE_MODE_NONE:
             right_panel.setSizes([320, 640])
         else:
-            right_panel.setSizes([320, 960])
+            total = right_panel.height()
+            if total <= 0:
+                total = 800
+            overhead_time = 108
+            overhead_tabs = 42
+            curve_ratio = 1.0 / 3.0
+            at = (total - overhead_time + overhead_tabs * curve_ratio) / (1.0 + curve_ratio)
+            tp = total - at
+            right_panel.setSizes([max(200, int(tp)), max(200, int(at))])
 
     def _set_interaction_mode(self, mode: InteractionMode) -> None:
         self.time_plot.set_interaction_mode(mode)
