@@ -86,8 +86,8 @@ python .\build_exe.py --collect-sklearn
 ## Basic Workflow
 
 1. Choose a data directory.
-2. Select a file from the list.
-3. View waveform in the top plot.
+2. Select a file from the list, or use Ctrl/extended selection to select multiple compatible files.
+3. View waveform in the top plot. Multi-selected files are sorted by start time and concatenated end-to-start before plotting.
 4. Adjust filter parameters in `Display Controls` if needed.
 5. Use `Zoom Mode` or `Window PSD Mode` for interaction.
 6. Use `Apply Visible Window` to set visible duration.
@@ -105,7 +105,8 @@ python .\build_exe.py --collect-sklearn
 - Legacy start-time tokens such as `20260323T103125.631` are supported.
 - New TDMS start-time tokens such as `2026-8-1-12-43-36` are supported.
 - Compact TXT start-time tokens such as `20260820170538.780` are supported.
-- The top time plot, visible raw export, audio playback/export, SVM prediction, and short-time energy use CH1 by default.
+- Visible raw export preserves every loaded channel; the top time plot, audio playback/export, SVM prediction, and short-time energy use CH1 by default.
+- Ctrl/extended multi-selection in the file list concatenates selected files by parsed start time. Selected files must have the same sample rate and channel count.
 - The t-f plot defaults to CH1 and can switch to CH2 from the `t-f Plot` tab when the loaded file has two channels.
 - Plot 2 `CH2 Waveform` applies the same display filter settings as the top time plot.
 - PSD uses the selected raw window and can draw CH1, CH2, or CH1+CH2.

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 from scipy.io import wavfile
@@ -58,7 +58,32 @@ def build_export_wav_name(start_time: datetime, sample_rate: float) -> str:
     return f"FIP-audio-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.wav"
 
 
-def save_tdms_waveform(path: Path, phase_data: np.ndarray, sample_rate: float, start_time: datetime) -> Path:
+def _normalize_channel_export_data(phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray]) -> tuple[np.ndarray, ...]:
+    if isinstance(phase_data, (tuple, list)):
+        channels = tuple(np.asarray(channel, dtype=np.float64).reshape(-1) for channel in phase_data)
+    else:
+        values = np.asarray(phase_data, dtype=np.float64)
+        if values.ndim == 2:
+            channels = tuple(values[:, index].reshape(-1) for index in range(values.shape[1]))
+        else:
+            channels = (values.reshape(-1),)
+
+    if not channels:
+        raise ValueError("At least one channel is required for export.")
+
+    sample_count = channels[0].size
+    if any(channel.size != sample_count for channel in channels):
+        raise ValueError("All exported channels must have the same sample count.")
+    return channels
+
+
+def _channels_to_export_array(channels: tuple[np.ndarray, ...]) -> np.ndarray:
+    if len(channels) == 1:
+        return channels[0]
+    return np.column_stack(channels)
+
+
+def save_tdms_waveform(path: Path, phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray], sample_rate: float, start_time: datetime) -> Path:
     try:
         from nptdms import ChannelObject, RootObject, TdmsWriter
     except ImportError as exc:
@@ -68,32 +93,38 @@ def save_tdms_waveform(path: Path, phase_data: np.ndarray, sample_rate: float, s
 
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    values = np.asarray(phase_data, dtype=np.float64).reshape(-1)
+    channels = _normalize_channel_export_data(phase_data)
+    channel_names = tuple("phase_data" if index == 0 else f"phase_data_ch{index + 1}" for index in range(len(channels)))
     root = RootObject(
         properties={
             'start_time': start_time.isoformat(timespec='milliseconds'),
             'sample_rate': float(sample_rate),
-            'channel_name': 'phase_data',
+            'channel_name': channel_names[0],
+            'channel_count': len(channels),
+            'channel_names': ",".join(channel_names),
         }
     )
-    channel = ChannelObject(
-        'FIP',
-        'phase_data',
-        values,
-        properties={
-            'start_time': start_time.isoformat(timespec='milliseconds'),
-            'sample_rate': float(sample_rate),
-            'unit_string': 'rad',
-        },
+    channel_objects = (
+        ChannelObject(
+            'FIP',
+            channel_name,
+            values,
+            properties={
+                'start_time': start_time.isoformat(timespec='milliseconds'),
+                'sample_rate': float(sample_rate),
+                'unit_string': 'rad',
+            },
+        )
+        for channel_name, values in zip(channel_names, channels)
     )
     with TdmsWriter(destination) as writer:
-        writer.write_segment([root, channel])
+        writer.write_segment([root, *channel_objects])
     return destination
 
 
 def save_npz_waveform(
     path: Path,
-    phase_data: np.ndarray,
+    phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray],
     sample_rate: float,
     start_time: datetime,
     arrival_time: Optional[datetime] = None,
@@ -101,39 +132,47 @@ def save_npz_waveform(
 ) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    values = np.asarray(phase_data, dtype=np.float64).reshape(-1)
+    channels = _normalize_channel_export_data(phase_data)
+    values = _channels_to_export_array(channels)
+    channel_names = tuple("phase_data" if index == 0 else f"phase_data_ch{index + 1}" for index in range(len(channels)))
+    sample_count = int(channels[0].size)
     start_time_token = format_start_time_token(start_time)
     arrival_time_token = format_arrival_time_token(arrival_time) if arrival_time is not None else None
     sample_type_token = str(sample_type).strip().upper() if sample_type is not None and str(sample_type).strip() else None
     np.savez(
         destination,
         phase_data=values,
+        channels=np.column_stack(channels),
+        channel_names=np.asarray(channel_names),
+        channel_count=len(channels),
         sample_rate=float(sample_rate),
-        comm_count=int(values.size),
-        npts=int(values.size),
+        comm_count=sample_count,
+        npts=sample_count,
         timestamp=float(start_time.timestamp()),
         starttime=start_time_token,
         arrival_time=arrival_time_token,
         type=sample_type_token,
         data_info={
             "type": "phase_data_export_visible_segment",
-            "length": int(values.size),
-            "npts": int(values.size),
-            "duration_seconds": float(values.size) / max(float(sample_rate), 1.0),
+            "length": sample_count,
+            "npts": sample_count,
+            "duration_seconds": float(sample_count) / max(float(sample_rate), 1.0),
             "save_time": datetime.now().isoformat(timespec="milliseconds"),
             "starttime": start_time_token,
             "arrival_time": arrival_time_token,
             "sample_type": sample_type_token,
+            "channel_count": len(channels),
+            "channel_names": channel_names,
         },
     )
     return destination
 
 
-def save_txt_waveform(path: Path, phase_data: np.ndarray) -> Path:
+def save_txt_waveform(path: Path, phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray]) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    values = np.asarray(phase_data, dtype=np.float64).reshape(-1)
-    np.savetxt(destination, values, fmt="%.18e")
+    channels = _normalize_channel_export_data(phase_data)
+    np.savetxt(destination, _channels_to_export_array(channels), fmt="%.18e")
     return destination
 
 
@@ -285,10 +324,31 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
     sample_type: Optional[str] = None
 
     with np.load(path, allow_pickle=True) as data:
-        phase_data = np.asarray(data["phase_data"], dtype=np.float64).reshape(-1)
+        raw_phase_data = np.asarray(data["phase_data"], dtype=np.float64)
+        if raw_phase_data.ndim == 2:
+            if raw_phase_data.shape[1] < 1:
+                raise ValueError(f"NPZ phase_data contains no channels: {path.name}")
+            channel_arrays = tuple(raw_phase_data[:, index].reshape(-1) for index in range(raw_phase_data.shape[1]))
+        elif "channels" in data.files:
+            raw_channels = np.asarray(data["channels"], dtype=np.float64)
+            if raw_channels.ndim == 2:
+                channel_arrays = tuple(raw_channels[:, index].reshape(-1) for index in range(raw_channels.shape[1]))
+            else:
+                channel_arrays = (raw_channels.reshape(-1),)
+        else:
+            channel_arrays = (raw_phase_data.reshape(-1),)
+        phase_data = channel_arrays[0]
         sample_rate = _read_scalar(data, "sample_rate", float)
         comm_count = _read_scalar(data, "comm_count", int)
         timestamp = _read_scalar(data, "timestamp", float)
+        channel_names = tuple(f"CH{index + 1}" for index in range(len(channel_arrays)))
+        if "channel_names" in data.files:
+            try:
+                loaded_names = tuple(str(item) for item in np.asarray(data["channel_names"]).reshape(-1).tolist())
+                if loaded_names:
+                    channel_names = loaded_names
+            except Exception as exc:
+                warnings.append(f"Failed to read channel_names: {exc}")
 
         if "data_info" in data.files:
             try:
@@ -341,8 +401,8 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
         data_info_warning=warning,
         arrival_time=arrival_time,
         sample_type=sample_type,
-        channels=(phase_data,),
-        channel_names=("phase_data",),
+        channels=channel_arrays,
+        channel_names=channel_names,
     )
 
 
@@ -462,3 +522,55 @@ def load_waveform(path: Path) -> LoadedWaveform:
     if suffix == ".txt":
         return _load_txt_waveform(path)
     raise ValueError(f"Unsupported file type: {path.suffix}")
+
+
+def load_waveforms_concatenated(paths: Sequence[Path]) -> LoadedWaveform:
+    selected_paths = [Path(path) for path in paths]
+    if not selected_paths:
+        raise ValueError("At least one file is required.")
+    if len(selected_paths) == 1:
+        return load_waveform(selected_paths[0])
+
+    waveforms = sorted((load_waveform(path) for path in selected_paths), key=lambda item: item.start_time)
+    sample_rate = float(waveforms[0].sample_rate)
+    channel_count = waveforms[0].channel_count
+    channel_names = waveforms[0].channel_names
+    for waveform in waveforms[1:]:
+        if abs(float(waveform.sample_rate) - sample_rate) > max(1e-9, sample_rate * 1e-9):
+            raise ValueError("Selected files must have the same sample rate before concatenation.")
+        if waveform.channel_count != channel_count:
+            raise ValueError("Selected files must have the same channel count before concatenation.")
+
+    concatenated_channels = tuple(
+        np.concatenate([waveform.channel_data(channel_index) for waveform in waveforms])
+        for channel_index in range(channel_count)
+    )
+    phase_data = concatenated_channels[0]
+    start_time = waveforms[0].start_time
+    source_files = [str(waveform.path) for waveform in waveforms]
+    display_name = f"{waveforms[0].path.stem}+{len(waveforms)}files{waveforms[0].path.suffix}"
+
+    return LoadedWaveform(
+        path=waveforms[0].path.with_name(display_name),
+        phase_data=phase_data,
+        sample_rate=sample_rate,
+        comm_count=int(phase_data.size),
+        timestamp=start_time.timestamp(),
+        start_time=start_time,
+        data_info={
+            "source_format": "concatenated",
+            "source_files": source_files,
+            "file_count": len(waveforms),
+            "channel_count": channel_count,
+            "channel_names": channel_names,
+            "start_time": start_time.isoformat(timespec="milliseconds"),
+            "end_time": (
+                start_time + timedelta(seconds=float(phase_data.size) / max(sample_rate, 1.0))
+            ).isoformat(timespec="milliseconds"),
+        },
+        data_info_warning=None,
+        arrival_time=None,
+        sample_type=None,
+        channels=concatenated_channels,
+        channel_names=channel_names,
+    )

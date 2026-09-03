@@ -18,6 +18,7 @@ from data_access import (
     format_arrival_time_token,
     list_data_files,
     load_waveform,
+    load_waveforms_concatenated,
     paginate_files,
     save_npz_waveform,
     save_tdms_waveform,
@@ -81,15 +82,15 @@ class LoadWaveformWorker(QtCore.QObject):
     finished = QtCore.pyqtSignal(int, object)
     failed = QtCore.pyqtSignal(int, str)
 
-    def __init__(self, task_id: int, path: Path) -> None:
+    def __init__(self, task_id: int, paths: list[Path]) -> None:
         super().__init__()
         self._task_id = task_id
-        self._path = path
+        self._paths = paths
 
     @QtCore.pyqtSlot()
     def run(self) -> None:
         try:
-            waveform = load_waveform(self._path)
+            waveform = load_waveforms_concatenated(self._paths)
         except Exception as exc:
             self.failed.emit(self._task_id, str(exc))
             return
@@ -423,6 +424,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.file_list = QtWidgets.QListWidget()
         self.file_list.setMinimumHeight(240)
         self.file_list.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.file_list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.page_info_label = QtWidgets.QLabel("Page 0 / 0 | Total 0")
         self.home_button = QtWidgets.QPushButton("Home")
         self.prev_button = QtWidgets.QPushButton(f"Previous {PAGE_SIZE}")
@@ -1072,7 +1074,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sample_type_combo.currentTextChanged.connect(self._handle_sample_type_text_changed)
         self.sort_field_combo.currentIndexChanged.connect(self._refresh_file_list)
         self.sort_order_combo.currentIndexChanged.connect(self._refresh_file_list)
-        self.file_list.currentRowChanged.connect(self._handle_file_selection)
+        self.file_list.itemSelectionChanged.connect(self._handle_file_selection)
         self.home_button.clicked.connect(lambda: self._change_page(0))
         self.prev_button.clicked.connect(lambda: self._change_page(self._page_index - 1))
         self.next_button.clicked.connect(lambda: self._change_page(self._page_index + 1))
@@ -1684,18 +1686,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._change_page(int(self.page_jump_spin.value()) - 1)
 
-    def _handle_file_selection(self, row: int) -> None:
-        if row < 0:
-            return
-        item = self.file_list.item(row)
-        if item is None:
-            return
-
-        path = item.data(QtCore.Qt.UserRole)
-        if not path:
+    def _handle_file_selection(self) -> None:
+        paths: list[Path] = []
+        for item in self.file_list.selectedItems():
+            path = item.data(QtCore.Qt.UserRole)
+            if path:
+                paths.append(Path(path))
+        if not paths:
             return
 
-        self._start_waveform_load(Path(path))
+        self._start_waveform_load(paths)
 
     def _build_channel_display_values(
         self, waveform: Optional[LoadedWaveform], channel_index: int, *, strict_validation: bool = False
@@ -1805,7 +1805,9 @@ class MainWindow(QtWidgets.QMainWindow):
             + (f" Failed to process {failed_files} files." if failed_files else "")
         )
 
-    def _start_waveform_load(self, path: Path) -> None:
+    def _start_waveform_load(self, paths: list[Path]) -> None:
+        if not paths:
+            return
         self._load_task_id += 1
         task_id = self._load_task_id
         self._prediction_task_id += 1
@@ -1825,10 +1827,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.visible_length_label.setText("Visible: 0.000 s")
         self.window_length_label.setText("Window: 0.000 s")
         self._update_time_scrollbar()
-        self.statusBar().showMessage(f"Loading {path.name}...")
+        if len(paths) == 1:
+            self.statusBar().showMessage(f"Loading {paths[0].name}...")
+        else:
+            self.statusBar().showMessage(f"Loading and concatenating {len(paths)} files by start time...")
 
         thread = QtCore.QThread(self)
-        worker = LoadWaveformWorker(task_id, path)
+        worker = LoadWaveformWorker(task_id, paths)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._handle_waveform_loaded)
@@ -2592,6 +2597,10 @@ class MainWindow(QtWidgets.QMainWindow):
             overhead_time = 108
             overhead_tabs = 42
             curve_ratio = 1.0 / 3.0
+            if self._current_feature_mode() in {FEATURE_MODE_CHANNEL_1, FEATURE_MODE_CHANNEL_2}:
+                top_panel = (total + overhead_time - overhead_tabs * curve_ratio) / (1.0 + curve_ratio)
+                right_panel.setSizes([max(240, int(top_panel)), max(200, int(total - top_panel))])
+                return
             at = (total - overhead_time + overhead_tabs * curve_ratio) / (1.0 + curve_ratio)
             tp = total - at
             right_panel.setSizes([max(200, int(tp)), max(200, int(at))])
@@ -2976,7 +2985,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for decade in range(first_decade, last_decade + 1):
             frequency = 10.0 ** decade
             if frequency >= 1.0:
-                major_ticks.append((float(decade), f"{frequency:.0f}Hz"))
+                major_ticks.append((float(decade), f"{frequency:.0f}"))
 
         minor_start = int(np.floor(x_min))
         minor_stop = int(np.ceil(x_max))

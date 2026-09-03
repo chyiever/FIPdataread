@@ -49,7 +49,9 @@ If no supported start-time token is present, file modification time is used as t
 - `.txt` is included in the readable file list together with `.npz` and `.tdms`.
 - The export-format dropdown now includes `TXT` in addition to `NPZ` and `TDMS`.
 - Two-column txt files can use `CH2 Waveform` in Plot 2, CH2 / CH1+CH2 PSD, and CH2 t-f analysis, the same as two-channel TDMS files.
-- Existing CH1 workflows still use column 1: visible raw export, audio playback/export, SVM prediction, and short-time energy.
+- Existing CH1 workflows still use column 1: audio playback/export, SVM prediction, and short-time energy.
+- Visible raw export preserves every loaded channel. A two-column TXT input exports two channels.
+- Ctrl/extended multi-selection in the file list concatenates selected readable files by parsed start time. All selected files must have the same sample rate and channel count.
 - The top-row `CH` dropdown switches the visible top time plot and the t-f plot between CH1 and CH2.
 
 ## Current TDMS Dual-Channel Compatibility

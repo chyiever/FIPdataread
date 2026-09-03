@@ -241,7 +241,7 @@ class LogPowerFrequencyAxis(pg.AxisItem):
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
             tickTextOffset=8,
-            tickLength=-8,
+            tickLength=8,
         )
         self.setPen(pg.mkPen("k"))
         self.setTextPen(pg.mkPen("k"))

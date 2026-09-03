@@ -72,25 +72,29 @@
 
 ## 三、开发日志
 
-### 2026-09-03
+### 2026-09-04
+- 文件列表支持 Ctrl/扩展多选；选中多个可读波形文件后，按文件起始时间从早到晚首尾拼接为一个连续波形，再复用现有绘图、滤波、PSD、t-f、音频和导出流程。
+- 多文件拼接会校验采样率与通道数一致，并按通道分别拼接，保留双通道数据参与后续分析。
 - PSD 横轴刻度线改为朝外（向下），刻度值后不再显示 Hz 单位。
 - 修复双通道时两个时域图（Plot 1 与 Plot 2）高度不一致的问题。
-- 为 PSD 图添加矩形放大功能（左键拖拽框选放大，右键恢复）。
 - 功能 / 变更点：
-  - `LogPowerFrequencyAxis` 的 `tickLength` 从 `8` 改为 `-8`，使刻度线向下（朝外）绘制；
-  - `LogPowerFrequencyAxis` 新增 `generateDrawSpecs()` 方法，添加次刻度线 stub，与 `AbsoluteTimeAxis` / `LogFrequencyAxis` 保持一致；
-  - `tickStrings()` 输出纯数字（如 `1`、`10`、`100`、`1000`），不带 Hz 后缀；
-  - `_apply_right_plot_splitter_sizes()` 在双通道模式下根据窗口实际高度动态计算 `right_panel` 分割比例，补偿 `time_column_layout` 中 `mode_row`、`info_row`、`time_scrollbar` 的固定占用高度（约 `108px`），使 Plot 1 与 Plot 2 的可视绘图区高度相等；
-  - PSD 图的 `ViewBox` 设为 `RectMode`，支持左键框选放大，右键点击恢复自动范围。
+  - 新增 `load_waveforms_concatenated()`，加载多个文件后按 `start_time` 排序并构造合成 `LoadedWaveform`；
+  - `QListWidget` 改为 `ExtendedSelection`，通过 `itemSelectionChanged` 获取当前选中路径；
+  - `LoadWaveformWorker` 从单路径加载改为路径列表加载；
+  - `LogPowerFrequencyAxis` 使用与时间轴一致的朝外刻度配置；
+  - `_update_psd_x_axis_ticks()` 输出纯数字（如 `1`、`10`、`100`、`1000`），不带 `Hz` 后缀；
+  - `_apply_right_plot_splitter_sizes()` 在 `Plot 2` 显示 `CH1` / `CH2` 时补偿 `mode_row`、`info_row`、`time_scrollbar` 的固定占用高度，使 Plot 1 与 Plot 2 的可视绘图区高度一致。
 - 关键代码：
-  - `src/plotting.py::LogPowerFrequencyAxis` — 刻度线方向、次刻度线 stub、刻度标签
-  - `src/main_window.py::_apply_right_plot_splitter_sizes()` — 动态分割比例
-  - `src/main_window.py::_build_ui()` — PSD `RectMode` 设置
+  - `src/data_access.py::load_waveforms_concatenated()`
+  - `src/main_window.py::LoadWaveformWorker`
+  - `src/main_window.py::_handle_file_selection()`
+  - `src/main_window.py::_start_waveform_load()`
+  - `src/main_window.py::_apply_right_plot_splitter_sizes()`
+  - `src/main_window.py::_update_psd_x_axis_ticks()`
+  - `src/plotting.py::LogPowerFrequencyAxis`
 - 验证：
-  - `python -m py_compile src/plotting.py`
-  - `python -m py_compile src/main_window.py`
-  - 启动实测：PSD 横轴刻度线朝外、无 Hz 后缀；双通道文件加载后 Plot 1 与 Plot 2 高度一致；PSD 图可左键框选放大、右键恢复。
-- Problem solved: PSD 横轴刻度朝外无 Hz 单位，双通道时域图高度一致，PSD 支持矩形放大。
+  - `python -m py_compile src\data_access.py src\main_window.py src\plotting.py`
+- Problem solved: 可通过 Ctrl 多选把同采样率、同通道数的文件按时间拼接分析；PSD 横轴刻度朝外且无 Hz 单位；双通道时域图高度一致。
 
 ### 2026-08-29 (续)
 - 修复主窗口启动时的 `QWindowsWindow::setGeometry: Unable to set geometry ...` 警告与窗口超出屏幕的问题。
