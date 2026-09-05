@@ -72,6 +72,26 @@
 
 ## 三、开发日志
 
+### 2026-09-05
+- 修复双通道文件在 `1D Curve` 页显示 `CH1` / `CH2` 两个时域图时高度仍不相等的问题。
+- 根因：
+  - 之前 `_apply_right_plot_splitter_sizes()` 用固定 `overhead_time=108` 和 `overhead_tabs=42` 估算顶部工具栏、信息行、滚动条、tab 页框与 splitter handle 的高度；
+  - 真实 Qt 布局高度会随窗口尺寸、DPI、字体、tab 页框和 splitter handle 变化，固定估算值偏离后，外层 `right_panel` 与内层 `curve_splitter` 的比例不能保证 Plot 1 / Plot 2 / PSD 的实际绘图区满足 `1:1:2`；
+  - 因此虽然上一次设置了补偿公式，在部分窗口尺寸下仍会出现两个时域图高度不一致，或两个时域图高度之和不等于 PSD 图高度。
+- 修复：
+  - `_apply_right_plot_splitter_sizes()` 改为读取当前布局实测开销：顶部面板非 `time_plot` 部分高度、`analysis_tabs` 相对 `curve_splitter` 的页框/标签开销，以及外层 splitter handle 宽度；
+  - 在可用绘图高度中按 4 份分配：Plot 1 占 1 份，Plot 2 占 1 份，PSD 占 2 份；
+  - 同步设置外层 `right_panel` 和内层 `_curve_splitter`，确保 Plot 1 与 Plot 2 等高，且二者之和等于 PSD 高度；
+  - 在窗口 resize 与 `1D Curve` / `t-f Plot` 页签切换后用 `QTimer.singleShot(0, ...)` 延迟重算一次，避免布局尚未完成时使用旧高度。
+- 关键代码：
+  - `src/main_window.py::resizeEvent()`
+  - `src/main_window.py::_apply_right_plot_splitter_sizes()`
+  - `src/main_window.py::_measure_time_panel_overhead()`
+  - `src/main_window.py::_update_time_tf_alignment_for_tab()`
+- 验证：
+  - `python -m py_compile src\main_window.py`
+- Problem solved: 双通道 `CH1` / `CH2` 时域图按实际布局动态保持等高，两个时域图高度之和与 PSD 图高度一致。
+
 ### 2026-09-04
 - 文件列表支持 Ctrl/扩展多选；选中多个可读波形文件后，按文件起始时间从早到晚首尾拼接为一个连续波形，再复用现有绘图、滤波、PSD、t-f、音频和导出流程。
 - 多文件拼接会校验采样率与通道数一致，并按通道分别拼接，保留双通道数据参与后续分析。

@@ -873,6 +873,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_panel.addWidget(self.analysis_tabs)
         self._right_panel_splitter = right_panel
         self._apply_right_plot_splitter_sizes()
+        QtCore.QTimer.singleShot(0, self._apply_right_plot_splitter_sizes)
         self._update_time_tf_alignment_for_tab(self.analysis_tabs.currentIndex())
         self.tf_color_min_spin.setEnabled(False)
         self.tf_color_max_spin.setEnabled(False)
@@ -917,6 +918,10 @@ class MainWindow(QtWidgets.QMainWindow):
         main_splitter = getattr(self, "_main_splitter", None)
         if main_splitter is not None:
             main_splitter.setSizes([width // 6, width - width // 6])
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        QtCore.QTimer.singleShot(0, self._apply_right_plot_splitter_sizes)
 
     def _apply_theme(self) -> None:
         self.setStyleSheet(
@@ -1216,6 +1221,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.time_right_spacer.setMinimumWidth(0)
             self.time_right_spacer.setMaximumWidth(0)
         self._apply_right_plot_splitter_sizes()
+        QtCore.QTimer.singleShot(0, self._apply_right_plot_splitter_sizes)
         self.analysis_tabs.updateGeometry()
         self.tf_plot.updateGeometry()
         self.tf_histogram.updateGeometry()
@@ -2589,21 +2595,50 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.analysis_tabs.currentIndex() == 1:
             right_panel.setSizes([320, 640])
         elif self._current_feature_mode() == FEATURE_MODE_NONE:
+            curve_splitter = getattr(self, "_curve_splitter", None)
+            if curve_splitter is not None:
+                curve_splitter.setSizes([0, max(1, curve_splitter.height())])
             right_panel.setSizes([320, 640])
         else:
-            total = right_panel.height()
-            if total <= 0:
-                total = 800
-            overhead_time = 108
-            overhead_tabs = 42
-            curve_ratio = 1.0 / 3.0
-            if self._current_feature_mode() in {FEATURE_MODE_CHANNEL_1, FEATURE_MODE_CHANNEL_2}:
-                top_panel = (total + overhead_time - overhead_tabs * curve_ratio) / (1.0 + curve_ratio)
-                right_panel.setSizes([max(240, int(top_panel)), max(200, int(total - top_panel))])
+            curve_splitter = getattr(self, "_curve_splitter", None)
+            if curve_splitter is None:
                 return
-            at = (total - overhead_time + overhead_tabs * curve_ratio) / (1.0 + curve_ratio)
-            tp = total - at
-            right_panel.setSizes([max(200, int(tp)), max(200, int(at))])
+            total = max(1, right_panel.height())
+            time_overhead = self._measure_time_panel_overhead()
+            analysis_overhead = max(0, self.analysis_tabs.height() - curve_splitter.height())
+            right_handle = max(0, right_panel.handleWidth())
+            available = total - time_overhead - analysis_overhead - right_handle
+            if available <= 0:
+                right_panel.setSizes([320, 640])
+                curve_splitter.setSizes([270, 540])
+                return
+            plot_unit = max(1, int(round(available / 4.0)))
+            top_panel = time_overhead + plot_unit
+            analysis_panel = analysis_overhead + plot_unit * 3
+            right_panel.setSizes([max(1, int(top_panel)), max(1, int(analysis_panel))])
+            curve_splitter.setSizes([plot_unit, plot_unit * 2])
+
+    def _measure_time_panel_overhead(self) -> int:
+        layout = getattr(self, "_time_column_layout", None)
+        if layout is None:
+            return 0
+        plot_index = layout.indexOf(self.time_plot)
+        overhead = 0
+        for index in range(layout.count()):
+            if index == plot_index:
+                continue
+            item = layout.itemAt(index)
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                overhead += max(widget.height(), widget.sizeHint().height())
+            else:
+                overhead += max(item.geometry().height(), item.sizeHint().height())
+        overhead += max(0, layout.spacing()) * max(0, layout.count() - 1)
+        margins = layout.contentsMargins()
+        overhead += margins.top() + margins.bottom()
+        return max(0, int(overhead))
 
     def _set_interaction_mode(self, mode: InteractionMode) -> None:
         self.time_plot.set_interaction_mode(mode)
