@@ -2934,6 +2934,7 @@ class MainWindow(QtWidgets.QMainWindow):
         stage1_step = float(self.feature_maxnum_step_spin.value()) / 100.0
         amplitude_threshold = float(self.feature_maxnum_amp_threshold_spin.value())
         stage2_window = float(self.feature_maxnum_sum_window_spin.value()) / 1000.0
+        stage2_step = float(self.feature_maxnum_sum_step_spin.value())
         sub_window = float(self.feature_maxnum_sub_window_spin.value()) / 1000.0
         max_threshold = float(self.feature_maxnum_threshold_spin.value()) * 1e-6
 
