@@ -45,7 +45,11 @@ from plotting import (
 from processing import (
     apply_display_filter,
     compute_time_frequency_map,
+    compute_short_time_band_energy,
     compute_short_time_energy_ratio,
+    compute_short_time_energy_sum,
+    compute_short_time_max_num,
+    compute_short_time_psd_sum,
     compute_short_time_svm_predictions,
     compute_window_psd,
     load_sliding_window_svm_predictor,
@@ -58,6 +62,10 @@ FEATURE_MODE_CHANNEL_1 = "channel_1_waveform"
 FEATURE_MODE_CHANNEL_2 = "channel_2_waveform"
 FEATURE_MODE_SVM = "svm_prediction"
 FEATURE_MODE_ENERGY = "short_time_energy"
+FEATURE_MODE_BAND_ENERGY = "short_time_band_energy"
+FEATURE_MODE_ENERGY_ENERGY = "short_time_energy_energy"
+FEATURE_MODE_PSD_SUM = "short_time_psd_sum"
+FEATURE_MODE_MAX_NUM = "st_energy_max_num"
 PSD_SOURCE_CHANNEL_1 = "channel_1"
 PSD_SOURCE_CHANNEL_2 = "channel_2"
 PSD_SOURCE_BOTH = "both"
@@ -601,10 +609,102 @@ class MainWindow(QtWidgets.QMainWindow):
         self.feature_den_high_spin.setDecimals(1)
         self.feature_den_high_spin.setRange(0.0, 1e9)
         self.feature_den_high_spin.setValue(UI_DEFAULTS.feature.band2_high_hz)
+        self.feature_energy_band_low_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy_band_low_spin.setDecimals(1)
+        self.feature_energy_band_low_spin.setRange(0.0, 1e9)
+        self.feature_energy_band_low_spin.setValue(UI_DEFAULTS.feature.band_low_hz)
+        self.feature_energy_band_high_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy_band_high_spin.setDecimals(1)
+        self.feature_energy_band_high_spin.setRange(0.0, 1e9)
+        self.feature_energy_band_high_spin.setValue(UI_DEFAULTS.feature.band_high_hz)
+        self.feature_energy2_band_low_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_band_low_spin.setDecimals(1)
+        self.feature_energy2_band_low_spin.setRange(0.0, 1e9)
+        self.feature_energy2_band_low_spin.setValue(UI_DEFAULTS.feature.band_low_hz)
+        self.feature_energy2_band_high_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_band_high_spin.setDecimals(1)
+        self.feature_energy2_band_high_spin.setRange(0.0, 1e9)
+        self.feature_energy2_band_high_spin.setValue(UI_DEFAULTS.feature.band_high_hz)
+        self.feature_energy2_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_window_spin.setDecimals(3)
+        self.feature_energy2_window_spin.setRange(0.001, 100000.0)
+        self.feature_energy2_window_spin.setValue(UI_DEFAULTS.feature.stage1_window_seconds * 1000.0)
+        self.feature_energy2_step_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_step_spin.setDecimals(1)
+        self.feature_energy2_step_spin.setRange(1.0, 100.0)
+        self.feature_energy2_step_spin.setValue(UI_DEFAULTS.feature.step_percent)
+        self.feature_energy2_amp_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_amp_threshold_spin.setDecimals(6)
+        self.feature_energy2_amp_threshold_spin.setRange(0.0, 1e12)
+        self.feature_energy2_amp_threshold_spin.setValue(UI_DEFAULTS.feature.amplitude_gate)
+        self.feature_energy2_sum_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_sum_window_spin.setDecimals(3)
+        self.feature_energy2_sum_window_spin.setRange(0.001, 100000.0)
+        self.feature_energy2_sum_window_spin.setValue(UI_DEFAULTS.feature.stage2_window_seconds * 1000.0)
+        self.feature_energy2_sum_step_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_energy2_sum_step_spin.setDecimals(1)
+        self.feature_energy2_sum_step_spin.setRange(1.0, 100.0)
+        self.feature_energy2_sum_step_spin.setValue(UI_DEFAULTS.feature.step_percent)
+        self.feature_psd_sum_band_low_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_psd_sum_band_low_spin.setDecimals(1)
+        self.feature_psd_sum_band_low_spin.setRange(0.0, 1e9)
+        self.feature_psd_sum_band_low_spin.setValue(UI_DEFAULTS.feature.psd_sum_band_low_hz)
+        self.feature_psd_sum_band_high_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_psd_sum_band_high_spin.setDecimals(1)
+        self.feature_psd_sum_band_high_spin.setRange(0.0, 1e9)
+        self.feature_psd_sum_band_high_spin.setValue(UI_DEFAULTS.feature.psd_sum_band_high_hz)
+        self.feature_psd_sum_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_psd_sum_window_spin.setDecimals(4)
+        self.feature_psd_sum_window_spin.setRange(0.0001, 10.0)
+        self.feature_psd_sum_window_spin.setValue(UI_DEFAULTS.feature.psd_sum_window_seconds)
+        self.feature_psd_sum_step_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_psd_sum_step_spin.setDecimals(4)
+        self.feature_psd_sum_step_spin.setRange(0.0001, 10.0)
+        self.feature_psd_sum_step_spin.setValue(UI_DEFAULTS.feature.psd_sum_step_seconds)
+        self.feature_psd_sum_background_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_psd_sum_background_spin.setDecimals(3)
+        self.feature_psd_sum_background_spin.setRange(0.0001, 1e6)
+        self.feature_psd_sum_background_spin.setValue(UI_DEFAULTS.feature.psd_sum_background_seconds)
+        self.feature_maxnum_band_low_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_band_low_spin.setDecimals(1)
+        self.feature_maxnum_band_low_spin.setRange(0.0, 1e9)
+        self.feature_maxnum_band_low_spin.setValue(UI_DEFAULTS.feature.band_low_hz)
+        self.feature_maxnum_band_high_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_band_high_spin.setDecimals(1)
+        self.feature_maxnum_band_high_spin.setRange(0.0, 1e9)
+        self.feature_maxnum_band_high_spin.setValue(UI_DEFAULTS.feature.band_high_hz)
+        self.feature_maxnum_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_window_spin.setDecimals(3)
+        self.feature_maxnum_window_spin.setRange(0.001, 100000.0)
+        self.feature_maxnum_window_spin.setValue(UI_DEFAULTS.feature.stage1_window_seconds * 1000.0)
+        self.feature_maxnum_step_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_step_spin.setDecimals(1)
+        self.feature_maxnum_step_spin.setRange(1.0, 100.0)
+        self.feature_maxnum_step_spin.setValue(UI_DEFAULTS.feature.step_percent)
+        self.feature_maxnum_amp_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_amp_threshold_spin.setDecimals(6)
+        self.feature_maxnum_amp_threshold_spin.setRange(0.0, 1e12)
+        self.feature_maxnum_amp_threshold_spin.setValue(UI_DEFAULTS.feature.amplitude_gate)
+        self.feature_maxnum_sum_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_sum_window_spin.setDecimals(3)
+        self.feature_maxnum_sum_window_spin.setRange(0.001, 100000.0)
+        self.feature_maxnum_sum_window_spin.setValue(UI_DEFAULTS.feature.maxnum_window_seconds * 1000.0)
+        self.feature_maxnum_sum_step_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_sum_step_spin.setDecimals(4)
+        self.feature_maxnum_sum_step_spin.setRange(0.0001, 10.0)
+        self.feature_maxnum_sum_step_spin.setValue(UI_DEFAULTS.feature.maxnum_step_seconds)
+        self.feature_maxnum_sub_window_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_sub_window_spin.setDecimals(3)
+        self.feature_maxnum_sub_window_spin.setRange(0.001, 100000.0)
+        self.feature_maxnum_sub_window_spin.setValue(UI_DEFAULTS.feature.maxnum_sub_window_seconds * 1000.0)
+        self.feature_maxnum_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.feature_maxnum_threshold_spin.setDecimals(2)
+        self.feature_maxnum_threshold_spin.setRange(0.1, 1000000.0)
+        self.feature_maxnum_threshold_spin.setValue(UI_DEFAULTS.feature.maxnum_threshold)
         self.feature_window_spin = QtWidgets.QDoubleSpinBox()
-        self.feature_window_spin.setDecimals(4)
-        self.feature_window_spin.setRange(0.0001, 10.0)
-        self.feature_window_spin.setValue(UI_DEFAULTS.feature.window_seconds)
+        self.feature_window_spin.setDecimals(3)
+        self.feature_window_spin.setRange(0.001, 100000.0)
+        self.feature_window_spin.setValue(UI_DEFAULTS.feature.window_seconds * 1000.0)
         self.feature_step_spin = QtWidgets.QDoubleSpinBox()
         self.feature_step_spin.setDecimals(1)
         self.feature_step_spin.setRange(1.0, 100.0)
@@ -623,20 +723,110 @@ class MainWindow(QtWidgets.QMainWindow):
         self.feature_y_max_spin.setValue(UI_DEFAULTS.feature.y_max)
         self.feature_apply_y_range_button = QtWidgets.QPushButton("Apply Feature Y Range")
         self.feature_apply_button = QtWidgets.QPushButton("Apply Feature Params")
-        feature_layout.addWidget(QtWidgets.QLabel("Band 1 Low (Hz)"), 0, 0)
-        feature_layout.addWidget(self.feature_num_low_spin, 0, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Band 1 High (Hz)"), 1, 0)
-        feature_layout.addWidget(self.feature_num_high_spin, 1, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Band 2 Low (Hz)"), 2, 0)
-        feature_layout.addWidget(self.feature_den_low_spin, 2, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Band 2 High (Hz)"), 3, 0)
-        feature_layout.addWidget(self.feature_den_high_spin, 3, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Window (s)"), 4, 0)
-        feature_layout.addWidget(self.feature_window_spin, 4, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Step (% of window)"), 5, 0)
-        feature_layout.addWidget(self.feature_step_spin, 5, 1)
-        feature_layout.addWidget(QtWidgets.QLabel("Amplitude Gate"), 6, 0)
-        feature_layout.addWidget(self.feature_amp_threshold_spin, 6, 1)
+
+        ratio_params_widget = QtWidgets.QWidget()
+        ratio_params_layout = QtWidgets.QGridLayout(ratio_params_widget)
+        ratio_params_layout.setContentsMargins(0, 0, 0, 0)
+        ratio_params_layout.setVerticalSpacing(4)
+        ratio_params_layout.addWidget(QtWidgets.QLabel("Band 1 Low (Hz)"), 0, 0)
+        ratio_params_layout.addWidget(self.feature_num_low_spin, 0, 1)
+        ratio_params_layout.addWidget(QtWidgets.QLabel("Band 1 High (Hz)"), 1, 0)
+        ratio_params_layout.addWidget(self.feature_num_high_spin, 1, 1)
+        ratio_params_layout.addWidget(QtWidgets.QLabel("Band 2 Low (Hz)"), 2, 0)
+        ratio_params_layout.addWidget(self.feature_den_low_spin, 2, 1)
+        ratio_params_layout.addWidget(QtWidgets.QLabel("Band 2 High (Hz)"), 3, 0)
+        ratio_params_layout.addWidget(self.feature_den_high_spin, 3, 1)
+        ratio_params_layout.addItem(QtWidgets.QSpacerItem(0, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding), 4, 0)
+
+        energy_params_widget = QtWidgets.QWidget()
+        energy_params_layout = QtWidgets.QGridLayout(energy_params_widget)
+        energy_params_layout.setContentsMargins(0, 0, 0, 0)
+        energy_params_layout.setVerticalSpacing(4)
+        energy_params_layout.addWidget(QtWidgets.QLabel("Band Low (Hz)"), 0, 0)
+        energy_params_layout.addWidget(self.feature_energy_band_low_spin, 0, 1)
+        energy_params_layout.addWidget(QtWidgets.QLabel("Band High (Hz)"), 1, 0)
+        energy_params_layout.addWidget(self.feature_energy_band_high_spin, 1, 1)
+        energy_params_layout.addItem(QtWidgets.QSpacerItem(0, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding), 2, 0)
+
+        energy2_params_widget = QtWidgets.QWidget()
+        energy2_params_layout = QtWidgets.QGridLayout(energy2_params_widget)
+        energy2_params_layout.setContentsMargins(0, 0, 0, 0)
+        energy2_params_layout.setVerticalSpacing(4)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Band Low (Hz)"), 0, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_band_low_spin, 0, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Band High (Hz)"), 1, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_band_high_spin, 1, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Stage 1 Window (ms)"), 2, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_window_spin, 2, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Stage 1 Step (% of window)"), 3, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_step_spin, 3, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Amplitude Gate"), 4, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_amp_threshold_spin, 4, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Stage 2 Window (ms)"), 5, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_sum_window_spin, 5, 1)
+        energy2_params_layout.addWidget(QtWidgets.QLabel("Stage 2 Step (% of window)"), 6, 0)
+        energy2_params_layout.addWidget(self.feature_energy2_sum_step_spin, 6, 1)
+        energy2_params_layout.addItem(QtWidgets.QSpacerItem(0, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding), 7, 0)
+
+        psd_sum_params_widget = QtWidgets.QWidget()
+        psd_sum_params_layout = QtWidgets.QGridLayout(psd_sum_params_widget)
+        psd_sum_params_layout.setContentsMargins(0, 0, 0, 0)
+        psd_sum_params_layout.setVerticalSpacing(4)
+        psd_sum_params_layout.addWidget(QtWidgets.QLabel("Band Low (Hz)"), 0, 0)
+        psd_sum_params_layout.addWidget(self.feature_psd_sum_band_low_spin, 0, 1)
+        psd_sum_params_layout.addWidget(QtWidgets.QLabel("Band High (Hz)"), 1, 0)
+        psd_sum_params_layout.addWidget(self.feature_psd_sum_band_high_spin, 1, 1)
+        psd_sum_params_layout.addWidget(QtWidgets.QLabel("PSD Window (s)"), 2, 0)
+        psd_sum_params_layout.addWidget(self.feature_psd_sum_window_spin, 2, 1)
+        psd_sum_params_layout.addWidget(QtWidgets.QLabel("Step (s)"), 3, 0)
+        psd_sum_params_layout.addWidget(self.feature_psd_sum_step_spin, 3, 1)
+        psd_sum_params_layout.addWidget(QtWidgets.QLabel("Background Window (s)"), 4, 0)
+        psd_sum_params_layout.addWidget(self.feature_psd_sum_background_spin, 4, 1)
+        psd_sum_params_layout.addItem(QtWidgets.QSpacerItem(0, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding), 5, 0)
+
+        maxnum_params_widget = QtWidgets.QWidget()
+        maxnum_params_layout = QtWidgets.QGridLayout(maxnum_params_widget)
+        maxnum_params_layout.setContentsMargins(0, 0, 0, 0)
+        maxnum_params_layout.setVerticalSpacing(4)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Band Low (Hz)"), 0, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_band_low_spin, 0, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Band High (Hz)"), 1, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_band_high_spin, 1, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Stage 1 Window (ms)"), 2, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_window_spin, 2, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Stage 1 Step (% of window)"), 3, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_step_spin, 3, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Amplitude Gate"), 4, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_amp_threshold_spin, 4, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Stage 2 Window (ms)"), 5, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_sum_window_spin, 5, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Stage 2 Step (s)"), 6, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_sum_step_spin, 6, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Sub Window (ms)"), 7, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_sub_window_spin, 7, 1)
+        maxnum_params_layout.addWidget(QtWidgets.QLabel("Max Threshold (×1e-6)"), 8, 0)
+        maxnum_params_layout.addWidget(self.feature_maxnum_threshold_spin, 8, 1)
+        maxnum_params_layout.addItem(QtWidgets.QSpacerItem(0, 0, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding), 9, 0)
+
+        self.feature_params_stack = QtWidgets.QStackedWidget()
+        self.feature_params_stack.addWidget(ratio_params_widget)
+        self.feature_params_stack.addWidget(energy_params_widget)
+        self.feature_params_stack.addWidget(energy2_params_widget)
+        self.feature_params_stack.addWidget(psd_sum_params_widget)
+        self.feature_params_stack.addWidget(maxnum_params_widget)
+        feature_layout.addWidget(self.feature_params_stack, 0, 0, 4, 2)
+
+        self.feature_window_gate_widget = QtWidgets.QWidget()
+        window_gate_layout = QtWidgets.QGridLayout(self.feature_window_gate_widget)
+        window_gate_layout.setContentsMargins(0, 0, 0, 0)
+        window_gate_layout.setVerticalSpacing(4)
+        window_gate_layout.addWidget(QtWidgets.QLabel("Window (ms)"), 0, 0)
+        window_gate_layout.addWidget(self.feature_window_spin, 0, 1)
+        window_gate_layout.addWidget(QtWidgets.QLabel("Step (% of window)"), 1, 0)
+        window_gate_layout.addWidget(self.feature_step_spin, 1, 1)
+        window_gate_layout.addWidget(QtWidgets.QLabel("Amplitude Gate"), 2, 0)
+        window_gate_layout.addWidget(self.feature_amp_threshold_spin, 2, 1)
+        feature_layout.addWidget(self.feature_window_gate_widget, 4, 0, 3, 2)
         feature_layout.addWidget(QtWidgets.QLabel("Feature Y Min"), 7, 0)
         feature_layout.addWidget(self.feature_y_min_spin, 7, 1)
         feature_layout.addWidget(QtWidgets.QLabel("Feature Y Max"), 8, 0)
@@ -747,7 +937,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.feature_plot_mode_combo.addItem("CH1", FEATURE_MODE_CHANNEL_1)
         self.feature_plot_mode_combo.addItem("CH2", FEATURE_MODE_CHANNEL_2)
         self.feature_plot_mode_combo.addItem("SVM Prediction", FEATURE_MODE_SVM)
-        self.feature_plot_mode_combo.addItem("Short-Time Energy", FEATURE_MODE_ENERGY)
+        self.feature_plot_mode_combo.addItem("ST Energy Ratio", FEATURE_MODE_ENERGY)
+        self.feature_plot_mode_combo.addItem("ST Energy", FEATURE_MODE_BAND_ENERGY)
+        self.feature_plot_mode_combo.addItem("ST Energy Energy", FEATURE_MODE_ENERGY_ENERGY)
+        self.feature_plot_mode_combo.addItem("ST PSD sum", FEATURE_MODE_PSD_SUM)
+        self.feature_plot_mode_combo.addItem("ST-energy-max-num", FEATURE_MODE_MAX_NUM)
         self.psd_source_combo = QtWidgets.QComboBox()
         self.psd_source_combo.addItem("CH1", PSD_SOURCE_CHANNEL_1)
         self.psd_source_combo.addItem("CH2", PSD_SOURCE_CHANNEL_2)
@@ -892,6 +1086,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_interaction_mode()
         self._update_channel_option_controls()
         self._update_feature_plot_style()
+        self._update_feature_params_page()
         self._handle_tf_color_auto_toggled(self.tf_color_auto_checkbox.isChecked())
         self._apply_time_frequency_colormap()
         main_splitter = getattr(self, "_main_splitter", None)
@@ -2467,7 +2662,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._current_feature_mode() == FEATURE_MODE_SVM:
             self._start_short_time_feature_prediction()
             return
-        self._rebuild_short_time_energy_plot()
+        if self._current_feature_mode() == FEATURE_MODE_ENERGY:
+            self._rebuild_short_time_energy_ratio_plot()
+            return
+        if self._current_feature_mode() == FEATURE_MODE_BAND_ENERGY:
+            self._rebuild_short_time_band_energy_plot()
+            return
+        if self._current_feature_mode() == FEATURE_MODE_ENERGY_ENERGY:
+            self._rebuild_short_time_energy_energy_plot()
+            return
+        if self._current_feature_mode() == FEATURE_MODE_PSD_SUM:
+            self._rebuild_short_time_psd_sum_plot()
+            return
+        self._rebuild_short_time_max_num_plot()
 
     def _rebuild_channel_waveform_plot(self, channel_index: int) -> None:
         if self._current_waveform is None or self._current_waveform.channel_count <= channel_index:
@@ -2486,7 +2693,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{self._current_waveform.channel_label(channel_index)} waveform updated in Plot 2."
         )
 
-    def _rebuild_short_time_energy_plot(self) -> None:
+    def _rebuild_short_time_energy_ratio_plot(self) -> None:
         if self._current_waveform is None:
             self._clear_short_time_feature_plot()
             return
@@ -2497,7 +2704,7 @@ class MainWindow(QtWidgets.QMainWindow):
         band1_high = float(self.feature_num_high_spin.value())
         band2_low = float(self.feature_den_low_spin.value())
         band2_high = float(self.feature_den_high_spin.value())
-        window_seconds = float(self.feature_window_spin.value())
+        window_seconds = float(self.feature_window_spin.value()) / 1000.0
         hop_ratio = float(self.feature_step_spin.value()) / 100.0
         amplitude_threshold = float(self.feature_amp_threshold_spin.value())
 
@@ -2516,7 +2723,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if window_seconds <= 0.0:
             self._clear_short_time_feature_plot()
-            self.statusBar().showMessage("Short-time window must be greater than 0 s.")
+            self.statusBar().showMessage("Short-time window must be greater than 0 ms.")
             return
         if hop_ratio <= 0.0 or hop_ratio > 1.0:
             self._clear_short_time_feature_plot()
@@ -2558,13 +2765,259 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_feature_y_range()
         self.statusBar().showMessage(f"Short-time feature updated for {centers.size} windows.")
 
+    def _rebuild_short_time_band_energy_plot(self) -> None:
+        if self._current_waveform is None:
+            self._clear_short_time_feature_plot()
+            return
+
+        sample_rate = float(self._current_waveform.sample_rate)
+        nyquist = sample_rate / 2.0
+        band_low = float(self.feature_energy_band_low_spin.value())
+        band_high = float(self.feature_energy_band_high_spin.value())
+        window_seconds = float(self.feature_window_spin.value()) / 1000.0
+        hop_ratio = float(self.feature_step_spin.value()) / 100.0
+        amplitude_threshold = float(self.feature_amp_threshold_spin.value())
+
+        if band_low < 0.0 or band_high <= 0.0 or band_low >= band_high:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Band frequency range is invalid.")
+            return
+        if band_high >= nyquist:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage(f"Band high cutoff must be lower than Nyquist ({nyquist:.1f} Hz).")
+            return
+        if window_seconds <= 0.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Short-time window must be greater than 0 ms.")
+            return
+        if hop_ratio <= 0.0 or hop_ratio > 1.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Step must be in the range (0, 100].")
+            return
+
+        centers, energies = compute_short_time_band_energy(
+            values=self._current_waveform.phase_data,
+            sample_rate=sample_rate,
+            band_low_hz=band_low,
+            band_high_hz=band_high,
+            window_seconds=window_seconds,
+            hop_ratio=hop_ratio,
+            amplitude_threshold=amplitude_threshold,
+            gate_values=self._current_display_values,
+        )
+        if centers.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Short-time feature parameters produced no valid windows.")
+            return
+
+        self.feature_curve.setData(centers, energies)
+        self._apply_feature_y_range()
+        self.statusBar().showMessage(f"Short-time feature updated for {centers.size} windows.")
+
+    def _rebuild_short_time_energy_energy_plot(self) -> None:
+        if self._current_waveform is None:
+            self._clear_short_time_feature_plot()
+            return
+
+        sample_rate = float(self._current_waveform.sample_rate)
+        nyquist = sample_rate / 2.0
+        band_low = float(self.feature_energy2_band_low_spin.value())
+        band_high = float(self.feature_energy2_band_high_spin.value())
+        stage1_window = float(self.feature_energy2_window_spin.value()) / 1000.0
+        stage1_step = float(self.feature_energy2_step_spin.value()) / 100.0
+        amplitude_threshold = float(self.feature_energy2_amp_threshold_spin.value())
+        stage2_window = float(self.feature_energy2_sum_window_spin.value()) / 1000.0
+        stage2_step = float(self.feature_energy2_sum_step_spin.value()) / 100.0
+
+        if band_low < 0.0 or band_high <= 0.0 or band_low >= band_high:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Band frequency range is invalid.")
+            return
+        if band_high >= nyquist:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage(f"Band high cutoff must be lower than Nyquist ({nyquist:.1f} Hz).")
+            return
+        if stage1_window <= 0.0 or stage2_window <= 0.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage windows must be greater than 0 ms.")
+            return
+        if stage1_step <= 0.0 or stage1_step > 1.0 or stage2_step <= 0.0 or stage2_step > 1.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage steps must be in the range (0, 100].")
+            return
+
+        centers1, energies1 = compute_short_time_band_energy(
+            values=self._current_waveform.phase_data,
+            sample_rate=sample_rate,
+            band_low_hz=band_low,
+            band_high_hz=band_high,
+            window_seconds=stage1_window,
+            hop_ratio=stage1_step,
+            amplitude_threshold=amplitude_threshold,
+            gate_values=self._current_display_values,
+        )
+        if centers1.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Short-time feature parameters produced no valid windows.")
+            return
+
+        centers2, sums = compute_short_time_energy_sum(
+            centers1,
+            energies1,
+            window_seconds=stage2_window,
+            hop_ratio=stage2_step,
+            sample_rate=sample_rate,
+        )
+        if centers2.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage 2 parameters produced no valid windows.")
+            return
+
+        self.feature_curve.setData(centers2, sums)
+        self._apply_feature_y_range()
+        self.statusBar().showMessage(f"Short-time feature updated for {centers2.size} windows.")
+
+    def _rebuild_short_time_psd_sum_plot(self) -> None:
+        if self._current_waveform is None:
+            self._clear_short_time_feature_plot()
+            return
+
+        sample_rate = float(self._current_waveform.sample_rate)
+        nyquist = sample_rate / 2.0
+        band_low = float(self.feature_psd_sum_band_low_spin.value())
+        band_high = float(self.feature_psd_sum_band_high_spin.value())
+        psd_window = float(self.feature_psd_sum_window_spin.value())
+        hop_seconds = float(self.feature_psd_sum_step_spin.value())
+        background_seconds = float(self.feature_psd_sum_background_spin.value())
+
+        if band_low < 0.0 or band_high <= 0.0 or band_low >= band_high:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Band frequency range is invalid.")
+            return
+        if band_high > nyquist:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage(f"Band high cutoff must not exceed Nyquist ({nyquist:.1f} Hz).")
+            return
+        if psd_window <= 0.0 or hop_seconds <= 0.0 or background_seconds <= 0.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("PSD window, step, and background window must be greater than 0 s.")
+            return
+
+        centers, sums = compute_short_time_psd_sum(
+            values=self._current_waveform.phase_data,
+            sample_rate=sample_rate,
+            psd_window_seconds=psd_window,
+            hop_seconds=hop_seconds,
+            background_seconds=background_seconds,
+            band_low_hz=band_low,
+            band_high_hz=band_high,
+        )
+        if centers.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Short-time feature parameters produced no valid windows.")
+            return
+
+        self.feature_curve.setData(centers, sums)
+        self._apply_feature_y_range()
+        self.statusBar().showMessage(f"Short-time feature updated for {centers.size} windows.")
+
+    def _rebuild_short_time_max_num_plot(self) -> None:
+        if self._current_waveform is None:
+            self._clear_short_time_feature_plot()
+            return
+
+        sample_rate = float(self._current_waveform.sample_rate)
+        nyquist = sample_rate / 2.0
+        band_low = float(self.feature_maxnum_band_low_spin.value())
+        band_high = float(self.feature_maxnum_band_high_spin.value())
+        stage1_window = float(self.feature_maxnum_window_spin.value()) / 1000.0
+        stage1_step = float(self.feature_maxnum_step_spin.value()) / 100.0
+        amplitude_threshold = float(self.feature_maxnum_amp_threshold_spin.value())
+        stage2_window = float(self.feature_maxnum_sum_window_spin.value()) / 1000.0
+        sub_window = float(self.feature_maxnum_sub_window_spin.value()) / 1000.0
+        max_threshold = float(self.feature_maxnum_threshold_spin.value()) * 1e-6
+
+        if band_low < 0.0 or band_high <= 0.0 or band_low >= band_high:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Band frequency range is invalid.")
+            return
+        if band_high >= nyquist:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage(f"Band high cutoff must be lower than Nyquist ({nyquist:.1f} Hz).")
+            return
+        if stage1_window <= 0.0 or stage2_window <= 0.0 or sub_window <= 0.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage and sub windows must be greater than 0 ms.")
+            return
+        if stage1_step <= 0.0 or stage1_step > 1.0 or stage2_step <= 0.0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage 1 step must be in (0, 100] and Stage 2 step must be greater than 0.")
+            return
+
+        centers1, energies1 = compute_short_time_band_energy(
+            values=self._current_waveform.phase_data,
+            sample_rate=sample_rate,
+            band_low_hz=band_low,
+            band_high_hz=band_high,
+            window_seconds=stage1_window,
+            hop_ratio=stage1_step,
+            amplitude_threshold=amplitude_threshold,
+            gate_values=self._current_display_values,
+        )
+        if centers1.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Short-time feature parameters produced no valid windows.")
+            return
+
+        centers2, counts = compute_short_time_max_num(
+            centers1,
+            energies1,
+            window_seconds=stage2_window,
+            hop_seconds=stage2_step,
+            sub_window_seconds=sub_window,
+            max_threshold=max_threshold,
+            sample_rate=sample_rate,
+        )
+        if centers2.size == 0:
+            self._clear_short_time_feature_plot()
+            self.statusBar().showMessage("Stage 2 parameters produced no valid windows.")
+            return
+
+        self.feature_curve.setData(centers2, counts)
+        self._apply_feature_y_range()
+        self.statusBar().showMessage(f"Short-time feature updated for {centers2.size} windows.")
+
     def _current_feature_mode(self) -> str:
         return str(self.feature_plot_mode_combo.currentData())
 
     def _handle_feature_mode_changed(self, _index: int) -> None:
         self._update_feature_plot_style()
         self._update_curve_splitter_for_feature_mode()
+        self._update_feature_params_page()
         self._rebuild_short_time_feature_plot()
+
+    def _update_feature_params_page(self) -> None:
+        mode = self._current_feature_mode()
+        if mode == FEATURE_MODE_ENERGY:
+            index = 0
+            show_window_gate = True
+        elif mode == FEATURE_MODE_BAND_ENERGY:
+            index = 1
+            show_window_gate = True
+        elif mode == FEATURE_MODE_ENERGY_ENERGY:
+            index = 2
+            show_window_gate = False
+        elif mode == FEATURE_MODE_PSD_SUM:
+            index = 3
+            show_window_gate = False
+        elif mode == FEATURE_MODE_MAX_NUM:
+            index = 4
+            show_window_gate = False
+        else:
+            index = 0
+            show_window_gate = True
+        self.feature_params_stack.setCurrentIndex(index)
+        self.feature_window_gate_widget.setVisible(show_window_gate)
 
     def _update_feature_plot_style(self) -> None:
         plot_item = self.feature_plot.getPlotItem()
@@ -2574,8 +3027,16 @@ class MainWindow(QtWidgets.QMainWindow):
             plot_item.setLabel("left", "Phase (rad)")
         elif self._current_feature_mode() == FEATURE_MODE_SVM:
             plot_item.setLabel("left", "SVM Prediction")
-        else:
+        elif self._current_feature_mode() == FEATURE_MODE_ENERGY:
             plot_item.setLabel("left", "Band Energy Density Ratio (dB)")
+        elif self._current_feature_mode() == FEATURE_MODE_BAND_ENERGY:
+            plot_item.setLabel("left", "Band Energy (Σx²)")
+        elif self._current_feature_mode() == FEATURE_MODE_ENERGY_ENERGY:
+            plot_item.setLabel("left", "ST Energy Energy (Σy²)")
+        elif self._current_feature_mode() == FEATURE_MODE_PSD_SUM:
+            plot_item.setLabel("left", "Band PSD Sum (rad²/Hz)")
+        else:
+            plot_item.setLabel("left", "ST Energy Max Num")
         self._apply_feature_y_range()
 
     def _update_curve_splitter_for_feature_mode(self) -> None:

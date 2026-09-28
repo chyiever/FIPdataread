@@ -39,9 +39,22 @@ class FeaturePanelDefaults:
     band1_high_hz: float = 10000.0
     band2_low_hz: float = 20000.0
     band2_high_hz: float = 40000.0
+    band_low_hz: float = 4000.0
+    band_high_hz: float = 10000.0
     window_seconds: float = 0.03
     step_percent: float = 50.0
     amplitude_gate: float = 0.02
+    stage1_window_seconds: float = 0.0001
+    stage2_window_seconds: float = 0.02
+    psd_sum_band_low_hz: float = 4000.0
+    psd_sum_band_high_hz: float = 10000.0
+    psd_sum_window_seconds: float = 0.025
+    psd_sum_step_seconds: float = 0.015
+    psd_sum_background_seconds: float = 1.0
+    maxnum_window_seconds: float = 0.07
+    maxnum_step_seconds: float = 0.015
+    maxnum_sub_window_seconds: float = 0.001
+    maxnum_threshold: float = 400.0
     y_min: float = 0.0
     y_max: float = 0.0
 

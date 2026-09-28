@@ -282,6 +282,233 @@ def compute_short_time_energy_ratio(
     return centers, ratios_db
 
 
+def compute_short_time_band_energy(
+    values: np.ndarray,
+    sample_rate: float,
+    *,
+    band_low_hz: float,
+    band_high_hz: float,
+    window_seconds: float,
+    hop_ratio: float,
+    amplitude_threshold: float,
+    gate_values: Optional[np.ndarray] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    signal = np.asarray(values, dtype=np.float64)
+    gate_signal = signal if gate_values is None else np.asarray(gate_values, dtype=np.float64)
+    if signal.size == 0 or sample_rate <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if gate_signal.size != signal.size:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    nyquist = sample_rate / 2.0
+    if band_low_hz < 0.0 or band_high_hz <= 0.0 or band_low_hz >= band_high_hz:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if band_high_hz >= nyquist:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    if band_low_hz > 0.0:
+        sos = butter(
+            N=4,
+            Wn=[band_low_hz / nyquist, band_high_hz / nyquist],
+            btype="bandpass",
+            output="sos",
+        )
+    else:
+        sos = butter(
+            N=4,
+            Wn=band_high_hz / nyquist,
+            btype="lowpass",
+            output="sos",
+        )
+    filtered = sosfiltfilt(sos, signal)
+
+    window_samples = max(2, int(round(window_seconds * sample_rate)))
+    if window_samples > signal.size:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    hop_samples = max(1, int(round(window_samples * hop_ratio)))
+    starts = np.arange(0, signal.size - window_samples + 1, hop_samples, dtype=np.int64)
+    if starts.size == 0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    centers = np.empty(starts.size, dtype=np.float64)
+    energies = np.empty(starts.size, dtype=np.float64)
+
+    for index, start in enumerate(starts):
+        stop = int(start + window_samples)
+        segment = filtered[int(start):stop]
+        gate_segment = gate_signal[int(start):stop]
+        centers[index] = start + (window_samples * 0.5)
+        if segment.size < window_samples or gate_segment.size < window_samples:
+            energies[index] = 0.0
+            continue
+        if float(np.max(np.abs(gate_segment))) < amplitude_threshold:
+            energies[index] = 0.0
+            continue
+        energies[index] = float(np.sum(segment ** 2))
+
+    return centers, energies
+
+
+def compute_short_time_energy_sum(
+    feature_centers: np.ndarray,
+    feature_values: np.ndarray,
+    *,
+    window_seconds: float,
+    hop_ratio: float,
+    sample_rate: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    centers = np.asarray(feature_centers, dtype=np.float64)
+    values = np.asarray(feature_values, dtype=np.float64)
+    if centers.size == 0 or values.size != centers.size or sample_rate <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if window_seconds <= 0.0 or hop_ratio <= 0.0 or hop_ratio > 1.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    window_width = float(window_seconds) * float(sample_rate)
+    hop_width = window_width * float(hop_ratio)
+    if window_width <= 0.0 or hop_width <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    half = window_width * 0.5
+    t_min = float(np.min(centers))
+    t_max = float(np.max(centers))
+    out_centers_list: list[float] = []
+    center = t_min + half
+    while center <= t_max:
+        out_centers_list.append(center)
+        center += hop_width
+    if not out_centers_list:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    out_centers = np.asarray(out_centers_list, dtype=np.float64)
+    sums = np.empty(out_centers.size, dtype=np.float64)
+    for index, out_center in enumerate(out_centers):
+        low = out_center - half
+        high = out_center + half
+        mask = (centers >= low) & (centers < high)
+        sums[index] = float(np.sum(values[mask] ** 2))
+    return out_centers, sums
+
+
+def compute_short_time_max_num(
+    feature_centers: np.ndarray,
+    feature_values: np.ndarray,
+    *,
+    window_seconds: float,
+    hop_seconds: float,
+    sub_window_seconds: float,
+    max_threshold: float,
+    sample_rate: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    centers = np.asarray(feature_centers, dtype=np.float64)
+    values = np.asarray(feature_values, dtype=np.float64)
+    if centers.size == 0 or values.size != centers.size or sample_rate <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if window_seconds <= 0.0 or hop_seconds <= 0.0 or sub_window_seconds <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    window_width = float(window_seconds) * float(sample_rate)
+    hop_width = float(hop_seconds) * float(sample_rate)
+    sub_width = float(sub_window_seconds) * float(sample_rate)
+    if window_width <= 0.0 or hop_width <= 0.0 or sub_width <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    half = window_width * 0.5
+    t_min = float(np.min(centers))
+    t_max = float(np.max(centers))
+    out_centers_list: list[float] = []
+    center = t_min + half
+    while center <= t_max:
+        out_centers_list.append(center)
+        center += hop_width
+    if not out_centers_list:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    out_centers = np.asarray(out_centers_list, dtype=np.float64)
+
+    sub_count = max(1, int(round(window_width / sub_width)))
+    counts = np.empty(out_centers.size, dtype=np.float64)
+    for index, out_center in enumerate(out_centers):
+        low = out_center - half
+        num = 0
+        for sub_index in range(sub_count):
+            sub_low = low + sub_index * sub_width
+            sub_high = sub_low + sub_width
+            mask = (centers >= sub_low) & (centers < sub_high)
+            if np.any(mask) and float(np.max(values[mask])) > max_threshold:
+                num += 1
+        counts[index] = float(num)
+    return out_centers, counts
+
+
+def compute_short_time_psd_sum(
+    values: np.ndarray,
+    sample_rate: float,
+    *,
+    psd_window_seconds: float,
+    hop_seconds: float,
+    background_seconds: float,
+    band_low_hz: float,
+    band_high_hz: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    signal = np.asarray(values, dtype=np.float64)
+    if signal.size < 2 or sample_rate <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if psd_window_seconds <= 0.0 or hop_seconds <= 0.0 or background_seconds <= 0.0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+    if band_low_hz < 0.0 or band_high_hz <= 0.0 or band_low_hz >= band_high_hz:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    nperseg = max(2, int(round(psd_window_seconds * sample_rate)))
+    hop = max(1, int(round(hop_seconds * sample_rate)))
+    background_samples = max(1, int(round(background_seconds * sample_rate)))
+
+    background_segment = signal[:background_samples]
+    if background_segment.size < nperseg:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    freqs, background_psd = welch(
+        background_segment,
+        fs=sample_rate,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=nperseg // 2,
+        detrend="linear",
+        scaling="density",
+        return_onesided=True,
+    )
+    band_mask = (freqs >= band_low_hz) & (freqs <= band_high_hz)
+    if not np.any(band_mask):
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    starts = np.arange(0, signal.size - nperseg + 1, hop, dtype=np.int64)
+    if starts.size == 0:
+        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
+
+    centers = np.empty(starts.size, dtype=np.float64)
+    sums = np.empty(starts.size, dtype=np.float64)
+    for index, start in enumerate(starts):
+        stop = int(start + nperseg)
+        segment = signal[int(start):stop]
+        centers[index] = start + (nperseg * 0.5)
+        if segment.size < nperseg:
+            sums[index] = 0.0
+            continue
+        _, psd = welch(
+            segment,
+            fs=sample_rate,
+            window="hann",
+            nperseg=nperseg,
+            noverlap=nperseg // 2,
+            detrend="linear",
+            scaling="density",
+            return_onesided=True,
+        )
+        diff = psd - background_psd
+        sums[index] = float(np.sum(diff[band_mask]))
+
+    return centers, sums
+
+
 @dataclass(frozen=True)
 class SlidingWindowSVMPredictor:
     model: Pipeline

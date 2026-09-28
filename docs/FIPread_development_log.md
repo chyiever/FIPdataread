@@ -72,6 +72,47 @@
 
 ## 三、开发日志
 
+### 2026-09-29 (续)
+- 文档整理：
+  - `README.md` 重写为中文，新增“界面与功能详解”“短时特征算法详解”等章节，补充显示滤波、PSD、t-f、音频处理等技术细节。
+  - 新增 `docs/特征算法详解.md`：为每个短时特征给出计算公式、中文含义、物理意义、界面参数默认值，以及**完整的函数实现代码**（函数体内用 `# ==== 模块名 ====` 分隔行划分输入校验 / 预处理 / 滑窗生成 / 逐窗计算 / 返回等模块，便于阅读）。
+- 关键代码：
+  - `docs/特征算法详解.md`
+  - `README.md`
+- 验证：
+  - `python -m py_compile src\main_window.py src\processing.py src\config.py`
+- Problem solved: 短时特征的公式、物理意义与实现代码集中成文档，便于理解与回归。
+
+### 2026-09-29
+- Plot 2 新增多个短时特征，并按下拉选择自动切换 `ST-feature` 参数页：
+  - `ST Energy Ratio`（原 `Short-Time Energy` 更名）：两频带能量密度比（dB）。100 Hz 高通预处理 + Hann 窗 FFT，频带功率除以带宽后取比值再取对数。
+  - `ST Energy`：指定频带带通滤波（4 阶 Butterworth，`Band Low=0` 时退化为低通）后，逐窗输出时域信号平方和 `Σx[n]²`，线性坐标。
+  - `ST Energy Energy`：两阶段。阶段 1 同 `ST Energy`（默认 0.1 ms 窗）；阶段 2 用 20 ms 二级窗对阶段 1 曲线做 `Σy[i]²`。
+  - `ST PSD sum`：以信号前 1 s 用 `welch`（25 ms 窗）估计本底 PSD，25 ms 窗 15 ms 步长短时 PSD 逐点相减后在指定频带求和，输出 rad²/Hz。
+  - `ST-energy-max-num`：两阶段。阶段 1 同 `ST Energy`；阶段 2 用 70 ms 二级窗、15 ms 步长滑动，将二级窗切成 1 ms 子窗，统计子窗最大能量大于阈值（默认 400，单位 ×1e-6）的子窗个数（0~70）。
+- `ST-feature` 面板改为 `QStackedWidget`（5 个参数页：Ratio / Energy / Energy Energy / PSD sum / max-num），选不同特征自动切换；共享的 `Window / Step / Amplitude Gate` 控件在不需要时隐藏。
+- 窗口宽度单位统一为 **ms**（输入范围 0.001 ~ 100000 ms，界面显示 ms，内部除以 1000 换算为秒）；`ST-energy-max-num` 的 `Max Threshold` 单位为 **×1e-6**（输入范围 0.1 ~ 1000000，内部乘以 1e-6）。
+- 新增特征计算函数：`compute_short_time_band_energy`、`compute_short_time_energy_sum`、`compute_short_time_psd_sum`、`compute_short_time_max_num`；`compute_short_time_energy_ratio` 逻辑不变。
+- 关键代码：
+  - `src/processing.py::compute_short_time_energy_ratio()`
+  - `src/processing.py::compute_short_time_band_energy()`
+  - `src/processing.py::compute_short_time_energy_sum()`
+  - `src/processing.py::compute_short_time_psd_sum()`
+  - `src/processing.py::compute_short_time_max_num()`
+  - `src/main_window.py::_rebuild_short_time_feature_plot()`
+  - `src/main_window.py::_update_feature_params_page()`
+  - `src/main_window.py::_rebuild_short_time_energy_ratio_plot()`
+  - `src/main_window.py::_rebuild_short_time_band_energy_plot()`
+  - `src/main_window.py::_rebuild_short_time_energy_energy_plot()`
+  - `src/main_window.py::_rebuild_short_time_psd_sum_plot()`
+  - `src/main_window.py::_rebuild_short_time_max_num_plot()`
+  - `src/config.py::FeaturePanelDefaults`
+- 验证：
+  - `python -m py_compile src\main_window.py src\processing.py src\config.py`
+  - 离屏 UI 冒烟：`feature_plot_mode_combo` 共 9 项、`feature_params_stack` 共 5 页，各模式切换后页索引与 `feature_window_gate_widget` 显隐正确；
+  - 数值冒烟：`compute_short_time_band_energy`（0.1 ms 窗）→ `compute_short_time_energy_sum`（20 ms 二级窗）两阶段 19999→99 窗；`compute_short_time_max_num` 信号段计数升至 70。
+- Problem solved: Plot 2 现支持 5 类短时特征，参数单位统一为 ms / ×1e-6，各特征参数页随下拉自动切换。
+
 ### 2026-09-05
 - 修复双通道文件在 `1D Curve` 页显示 `CH1` / `CH2` 两个时域图时高度仍不相等的问题。
 - 根因：
