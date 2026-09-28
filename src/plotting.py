@@ -5,12 +5,17 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import numpy as np
-from PyQt5 import QtGui
+from PyQt5 import QtCore, QtGui
 import pyqtgraph as pg
 
 AXIS_LABEL_FONT_SIZE_PT = 13
 AXIS_TICK_FONT_SIZE_PT = 13
-TIME_AXIS_HEIGHT_PX = 62
+TIME_AXIS_HEIGHT_PX = 48
+TIME_AXIS_TICK_TEXT_OFFSET_PX = 3
+TIME_AXIS_TICK_LENGTH_PX = 5
+TIME_AXIS_LABEL_NUDGE_PX = -1
+DEFAULT_AXIS_TICK_TEXT_OFFSET_PX = 8
+DEFAULT_AXIS_TICK_LENGTH_PX = 8
 
 
 _FALLBACK_COLORMAPS: dict[str, list[tuple[float, tuple[int, int, int]]]] = {
@@ -158,8 +163,8 @@ class AbsoluteTimeAxis(pg.AxisItem):
         self._sample_rate: float = 1.0
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
-            tickTextOffset=8,
-            tickLength=8,
+            tickTextOffset=TIME_AXIS_TICK_TEXT_OFFSET_PX,
+            tickLength=TIME_AXIS_TICK_LENGTH_PX,
         )
         self.setPen(pg.mkPen("k"))
         self.setTextPen(pg.mkPen("k"))
@@ -183,6 +188,21 @@ class AbsoluteTimeAxis(pg.AxisItem):
         self.picture = None
         self.update()
 
+    def resizeEvent(self, ev=None):
+        if self.label is None:
+            self.picture = None
+            return
+
+        if self.orientation == "bottom":
+            br = self.label.boundingRect()
+            x = int(self.size().width() / 2.0 - br.width() / 2.0)
+            y = int(self.size().height() - br.height() + TIME_AXIS_LABEL_NUDGE_PX)
+            self.label.setPos(QtCore.QPointF(x, y))
+            self.picture = None
+            return
+
+        super().resizeEvent(ev)
+
     def tickStrings(self, values, scale, spacing):
         if self._start_time is None:
             return [str(value) for value in values]
@@ -201,8 +221,8 @@ class LogFrequencyAxis(pg.AxisItem):
         # For a left axis, positive tickLength draws ticks outward toward the labels.
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
-            tickTextOffset=8,
-            tickLength=8,
+            tickTextOffset=DEFAULT_AXIS_TICK_TEXT_OFFSET_PX,
+            tickLength=DEFAULT_AXIS_TICK_LENGTH_PX,
         )
         self.setPen(pg.mkPen("k"))
         self.setTextPen(pg.mkPen("k"))
@@ -240,8 +260,8 @@ class LogPowerFrequencyAxis(pg.AxisItem):
         super().__init__(orientation=orientation)
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
-            tickTextOffset=8,
-            tickLength=8,
+            tickTextOffset=DEFAULT_AXIS_TICK_TEXT_OFFSET_PX,
+            tickLength=DEFAULT_AXIS_TICK_LENGTH_PX,
         )
         self.setPen(pg.mkPen("k"))
         self.setTextPen(pg.mkPen("k"))
@@ -404,13 +424,19 @@ def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_la
     bottom_axis.enableAutoSIPrefix(False)
     if bottom_label == "Time":
         bottom_axis.setHeight(TIME_AXIS_HEIGHT_PX)
+        bottom_tick_text_offset = TIME_AXIS_TICK_TEXT_OFFSET_PX
+        bottom_tick_length = TIME_AXIS_TICK_LENGTH_PX
+    else:
+        bottom_tick_text_offset = DEFAULT_AXIS_TICK_TEXT_OFFSET_PX
+        bottom_tick_length = DEFAULT_AXIS_TICK_LENGTH_PX
     plot_item.getAxis("left").setStyle(
         tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
-        tickTextOffset=8,
+        tickTextOffset=DEFAULT_AXIS_TICK_TEXT_OFFSET_PX,
     )
     plot_item.getAxis("bottom").setStyle(
         tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
-        tickTextOffset=8,
+        tickTextOffset=bottom_tick_text_offset,
+        tickLength=bottom_tick_length,
     )
     plot_item.getAxis("left").setPen(pg.mkPen(axis_color))
     plot_item.getAxis("left").setTextPen(pg.mkPen(text_color))
