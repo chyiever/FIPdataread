@@ -1,4 +1,13 @@
+"""Plot styling, custom axes and colormap helpers.
+
+Contains the custom pyqtgraph axes (absolute time, log frequency), the manual
+short-tick drawing used after the earlier tick-rendering attempts failed, and
+the matplotlib-to-``ColorMap`` conversion that keeps the t-f colour bar
+consistent between source and packaged runs.
+"""
+
 from __future__ import annotations
+
 
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
@@ -87,10 +96,28 @@ _FALLBACK_COLORMAPS: dict[str, list[tuple[float, tuple[int, int, int]]]] = {
 
 
 def _append_axis_tick_stubs(axis_item: pg.AxisItem, tick_specs, bounds, tick_levels) -> None:
+    """Draw short tick stubs at a left or bottom axis edge, independent of the grid.
+
+    These are appended to the axis' own draw specs (not added as plot-area items)
+    so short ticks can never be mistaken for reference or grid lines. This was the
+    fix for the earlier failed attempt that reused ``InfiniteLine`` for tick marks.
+
+    Args:
+        axis_item: the ``AxisItem`` whose edge receives the stubs.
+        tick_specs: the draw-spec list owned by the axis; stubs are appended to it.
+        bounds: the axis' device-pixel rectangle, used to build the value-to-pixel
+            transform.
+        tick_levels: ``(spacing, values)`` pairs, as produced by
+            ``_manual_tick_levels``.
+    """
+
     dif = axis_item.range[1] - axis_item.range[0]
     if dif == 0:
         return
 
+    # Map the axis range onto the widget's pixel rectangle once, then reuse that
+    # transform for every tick. The left axis grows upwards in device space, so
+    # its scale is negative and the offset differs from the bottom axis.
     orientation = axis_item.orientation
     if orientation == "left":
         scale = -bounds.height() / dif
@@ -110,6 +137,8 @@ def _append_axis_tick_stubs(axis_item: pg.AxisItem, tick_specs, bounds, tick_lev
         return
 
     for i, (_spacing, ticks) in enumerate(tick_levels):
+        # Minor decades get progressively shorter stubs, and each successive
+        # decade is drawn slightly more transparent so the minor ticks recede.
         tick_length = abs(axis_item.style["tickLength"]) / ((i * 0.5) + 1.0)
         tick_pen = QtGui.QPen(axis_item.tickPen())
         color = QtGui.QColor(tick_pen.color())
@@ -118,6 +147,8 @@ def _append_axis_tick_stubs(axis_item: pg.AxisItem, tick_specs, bounds, tick_lev
 
         for value in ticks:
             pos = (value * scale) - offset
+            # Skip ticks scrolled out of view; the axis range can be wider than
+            # the widget when the plot is panned.
             if pos < visible_min or pos > visible_max:
                 continue
             p1 = [pos, pos]
@@ -128,7 +159,21 @@ def _append_axis_tick_stubs(axis_item: pg.AxisItem, tick_specs, bounds, tick_lev
 
 
 def _manual_tick_levels(axis_item: pg.AxisItem, bounds):
+    """Return the tick levels (decades) visible in a log-frequency range.
+
+    Once the axis has been drawn, the levels it already computed are reused;
+    before the first paint, pyqtgraph is asked for them using the axis' measured
+    pixel length.
+
+    Returns:
+        ``(base_exponent, [(spacing, values), ...])``, or ``None`` when the pixel
+        span or the axis orientation makes the levels undeterminable.
+    """
+
     if axis_item._tickLevels is None:
+        # _tickLevels is only populated once the axis has been drawn at least
+        # once. Before that, measure the axis length in pixels and let pyqtgraph
+        # decide which decades fit.
         if axis_item.orientation == "left":
             span = (
                 bounds.topRight() + pg.Point(-1.0, -1.0),
@@ -157,7 +202,13 @@ def _manual_tick_levels(axis_item: pg.AxisItem, bounds):
 
 
 class AbsoluteTimeAxis(pg.AxisItem):
+    """Axis that labels positions as absolute wall-clock time.
+    """
+
     def __init__(self, orientation: str = "bottom") -> None:
+        """Create an axis that formats positions as absolute wall-clock time.
+        """
+
         super().__init__(orientation=orientation)
         self._start_time: Optional[datetime] = None
         self._sample_rate: float = 1.0
@@ -170,6 +221,9 @@ class AbsoluteTimeAxis(pg.AxisItem):
         self.setTextPen(pg.mkPen("k"))
 
     def generateDrawSpecs(self, p):
+        """Call the base implementation, then add outward short tick stubs.
+        """
+
         specs = super().generateDrawSpecs(p)
         if specs is None or self.grid is False or self.orientation != "bottom":
             return specs
@@ -183,12 +237,18 @@ class AbsoluteTimeAxis(pg.AxisItem):
         return axis_spec, tick_specs, text_specs
 
     def set_context(self, start_time: datetime, sample_rate: float) -> None:
+        """Provide the epoch and sample rate needed to format absolute times.
+        """
+
         self._start_time = start_time
         self._sample_rate = max(float(sample_rate), 1.0)
         self.picture = None
         self.update()
 
     def resizeEvent(self, ev=None):
+        """Recompute tick label spacing so labels do not overlap on resize.
+        """
+
         if self.label is None:
             self.picture = None
             return
@@ -204,6 +264,9 @@ class AbsoluteTimeAxis(pg.AxisItem):
         super().resizeEvent(ev)
 
     def tickStrings(self, values, scale, spacing):
+        """Format tick positions as ``HH:MM:SS.mmm`` absolute time.
+        """
+
         if self._start_time is None:
             return [str(value) for value in values]
 
@@ -216,7 +279,13 @@ class AbsoluteTimeAxis(pg.AxisItem):
 
 
 class LogFrequencyAxis(pg.AxisItem):
+    """Logarithmic frequency axis with standard base-10 tick placement.
+    """
+
     def __init__(self, orientation: str = "left") -> None:
+        """Create a logarithmic frequency axis.
+        """
+
         super().__init__(orientation=orientation)
         # For a left axis, positive tickLength draws ticks outward toward the labels.
         self.setStyle(
@@ -228,6 +297,9 @@ class LogFrequencyAxis(pg.AxisItem):
         self.setTextPen(pg.mkPen("k"))
 
     def generateDrawSpecs(self, p):
+        """Call the base implementation, then add outward short tick stubs.
+        """
+
         specs = super().generateDrawSpecs(p)
         if specs is None or self.grid is False or self.orientation != "left":
             return specs
@@ -241,6 +313,9 @@ class LogFrequencyAxis(pg.AxisItem):
         return axis_spec, tick_specs, text_specs
 
     def tickStrings(self, values, scale, spacing):
+        """Format tick positions using standard base-10 log values.
+        """
+
         labels: list[str] = []
         for value in values:
             frequency = 10.0 ** float(value)
@@ -256,7 +331,16 @@ class LogFrequencyAxis(pg.AxisItem):
 
 
 class LogPowerFrequencyAxis(pg.AxisItem):
+    """Log frequency axis for the PSD plot.
+
+    Ticks point outward (downward) and the labels are bare numbers
+    without a Hz suffix so the axis stays uncluttered.
+    """
+
     def __init__(self, orientation: str = "bottom") -> None:
+        """Create a log frequency axis with outward (downward) tick marks.
+        """
+
         super().__init__(orientation=orientation)
         self.setStyle(
             tickFont=QtGui.QFont("Times New Roman", AXIS_TICK_FONT_SIZE_PT),
@@ -267,6 +351,9 @@ class LogPowerFrequencyAxis(pg.AxisItem):
         self.setTextPen(pg.mkPen("k"))
 
     def generateDrawSpecs(self, p):
+        """Call the base implementation, then add outward short tick stubs.
+        """
+
         specs = super().generateDrawSpecs(p)
         if specs is None or self.grid is False or self.orientation != "bottom":
             return specs
@@ -280,6 +367,9 @@ class LogPowerFrequencyAxis(pg.AxisItem):
         return axis_spec, tick_specs, text_specs
 
     def tickStrings(self, values, scale, spacing):
+        """Return bare numeric labels (no Hz suffix) for each decade.
+        """
+
         labels: list[str] = []
         for value in values:
             frequency = 10.0 ** float(value)
@@ -291,6 +381,12 @@ class LogPowerFrequencyAxis(pg.AxisItem):
 
 
 def _fallback_colormap(name: str) -> pg.ColorMap:
+    """Return a minimal local colormap used only if matplotlib is unavailable.
+
+    This keeps the packaged app startable during an emergency even when the
+    matplotlib colormap modules fail to load.
+    """
+
     key = str(name).strip().lower()
     if key == "grey":
         key = "gray"
@@ -301,18 +397,27 @@ def _fallback_colormap(name: str) -> pg.ColorMap:
 
 
 def _coerce_colormap(candidate: object) -> pg.ColorMap | None:
+    """Normalise a colormap argument to a ``pyqtgraph.ColorMap``.
+    """
+
     if isinstance(candidate, pg.ColorMap):
         return candidate
     return None
 
 
 def _get_matplotlib_cmap(name: str):
+    """Fetch a matplotlib colormap by name, or ``None`` when unavailable.
+    """
+
     try:
         import matplotlib
     except Exception:
         return None
 
     try:
+        # matplotlib >= 3.9 exposes the registry as ``matplotlib.colormaps``;
+        # older versions only have the ``cm`` module. Try both so one code path
+        # works across the supported matplotlib range.
         registry = getattr(matplotlib, "colormaps", None)
         if registry is not None:
             return registry[name]
@@ -327,12 +432,21 @@ def _get_matplotlib_cmap(name: str):
 
 
 def _matplotlib_colormap(name: str) -> pg.ColorMap | None:
+    """Convert a matplotlib colormap into a ``pyqtgraph.ColorMap``.
+
+    Converts the colormap to RGBA stops and builds a discrete lookup so the t-f
+    colour bar looks identical in source mode and in the packaged exe.
+    """
+
     col_map = _get_matplotlib_cmap(name)
     if col_map is None:
         return None
 
     color_map: pg.ColorMap | None = None
     if hasattr(col_map, "_segmentdata"):
+        # matplotlib colormaps come in two shapes and both are handled here:
+        # a _segmentdata table (red/green/blue as (position, value) lists) and
+        # callable channel functions.
         data = col_map._segmentdata
         if ("red" in data) and isinstance(data["red"], (Sequence, np.ndarray)):
             positions = set()
@@ -351,6 +465,7 @@ def _matplotlib_colormap(name: str) -> pg.ColorMap | None:
                 col_data[:, index] = np.interp(col_data[:, 3], channel_positions, channel_values)
             color_map = pg.ColorMap(pos=col_data[:, 3], color=(255 * col_data[:, :3]) + 0.5)
         elif ("red" in data) and isinstance(data["red"], Callable):
+            # Callable-channel colormaps are sampled on a fixed 64-point grid.
             col_data = np.zeros((64, 4), dtype=np.float64)
             col_data[:, -1] = np.linspace(0.0, 1.0, 64)
             for index, key in enumerate(("red", "green", "blue")):
@@ -375,6 +490,14 @@ def _matplotlib_colormap(name: str) -> pg.ColorMap | None:
 
 
 def create_colormap(name: str) -> pg.ColorMap:
+    """Return a ``ColorMap`` for ``name``.
+
+    Four sources are tried in turn, so the colour bar looks the same in source
+    mode and in the packaged exe: pyqtgraph's matplotlib bridge, a direct
+    conversion of the matplotlib colormap, pyqtgraph's own registry, and finally
+    the small built-in fallback map. An empty name falls back to ``jet``.
+    """
+
     cmap_name = str(name).strip()
     if not cmap_name:
         cmap_name = "jet"
@@ -401,6 +524,9 @@ def create_colormap(name: str) -> pg.ColorMap:
 
 
 def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_label: str) -> None:
+    """Apply the shared plot styling (background, fonts, tick sizes, pens).
+    """
+
     axis_color = "#4B5563"
     text_color = "#1F2937"
     border_color = "#CBD5E1"
@@ -421,8 +547,12 @@ def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_la
     )
     plot_item = plot_widget.getPlotItem()
     bottom_axis = plot_item.getAxis("bottom")
+    # The time axis is labelled with absolute clock time, so pyqtgraph's SI
+    # prefix (which would render "1.5 s") must be switched off.
     bottom_axis.enableAutoSIPrefix(False)
     if bottom_label == "Time":
+        # The absolute-time ticks need a taller axis and a longer stub than the
+        # frequency axes, otherwise the labels collide with the plot area.
         bottom_axis.setHeight(TIME_AXIS_HEIGHT_PX)
         bottom_tick_text_offset = TIME_AXIS_TICK_TEXT_OFFSET_PX
         bottom_tick_length = TIME_AXIS_TICK_LENGTH_PX
@@ -449,4 +579,7 @@ def configure_plot_widget(plot_widget: pg.PlotWidget, left_label: str, bottom_la
 
 
 def make_pen(color: str, width: int = 1):
+    """Build a ``mkPen`` from a colour string and width.
+    """
+
     return pg.mkPen(color=color, width=width)

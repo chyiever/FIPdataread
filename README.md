@@ -23,13 +23,35 @@ FIPread 是一款用于浏览和分析 FIP 波形文件（`.npz`、`.tdms`、`.t
 - Windows
 - Python 3.9+
 
-批量安装依赖：
+以上依赖版本已在 conda 环境 `LZdataread39`（Python 3.9.19，Windows）中验证通过。
+
+运行依赖（源码运行 `python run.py` 与打包后的 exe 均需要）：
+
+| 库 | 版本 | 用途 |
+| --- | --- | --- |
+| numpy | 1.26.4 | 数组运算与波形数据处理 |
+| scipy | 1.13.1 | 滤波、welch PSD、统计量、wav 读写 |
+| PyQt5 | 5.15.10 | GUI 界面框架 |
+| pyqtgraph | 0.13.7 | 波形与 t-f 图绘制 |
+| nptdms | 1.10.0 | TDMS 文件读写 |
+| pandas | 2.0.3 | 数据处理与特征统计 |
+| joblib | 1.4.2 | SVM 模型加载 |
+| scikit-learn | 1.6.1 | SVM 预测 Pipeline |
+| matplotlib | 3.9.2 | t-f 图颜色映射（colormap） |
+
+批量安装运行依赖：
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-完整库列表及版本说明见 `docs/required-libraries.md`。
+一次性安装运行与打包依赖：
+
+```powershell
+pip install -r requirements.txt -r requirements-build.txt
+```
+
+> 依赖的唯一权威来源是根目录的 `requirements.txt` 与 `requirements-build.txt`（各库用途已写入对应行的注释）；改版本时只需同步修改这两个文件。
 
 ## 运行
 
@@ -39,7 +61,65 @@ pip install -r requirements.txt
 python .\run.py
 ```
 
+## 代码结构
+
+`run.py` 只负责把 `src` 加入 `sys.path` 并启动 Qt 事件循环。全部界面与算法代码位于 `src/`：
+
+| 模块 | 职责 |
+| --- | --- |
+| `main_window.py` | `MainWindow` 类定义与 mixin 组装、共享运行时状态 |
+| `constants.py` | 跨模块共享的常量（模式标识、配色等） |
+| `config.py` | 每个 UI 控件的默认值（`UI_DEFAULTS`） |
+| `models.py` | 核心数据类型（`FileRecord`、`LoadedWaveform`、枚举） |
+| `data_access.py` | 文件名解析、分页、`.npz`/`.tdms`/`.txt` 读写与拼接 |
+| `processing.py` | 数值核心：滤波、PSD、时频图、音频、短时特征、SVM |
+| `plotting.py` | 绘图样式、自定义坐标轴、colormap 转换 |
+| `widgets.py` | `TimePlotWidget` 与两个后台线程 worker |
+| `resources.py` | 定位 `logo.png` 等运行时资源（兼容 PyInstaller） |
+| `ui_builder.py` | 主窗口控件树构建、字体、主题、信号连接 |
+| `file_panel.py` | 目录浏览、文件列表分页、阈值过滤、加载 |
+| `plot_panel.py` | 时域绘图、PSD、交互模式、视图历史 |
+| `time_frequency_panel.py` | t-f Plot 页签 |
+| `short_time_feature_panel.py` | Plot 2 短时特征与 SVM 预测 |
+| `audio_panel.py` | 可见片段音频播放与导出 |
+| `export_panel.py` | 可见原始数据导出与初至时间标记 |
+| `layout.py` | 分割器尺寸、页签对齐、窗口缩放处理 |
+
+`MainWindow` 由 8 个行为 mixin 组合而成，按 MRO 顺序为：
+`UiBuilderMixin` → `FilePanelMixin` → `PlotPanelMixin` → `TimeFrequencyPanelMixin` → `ShortTimeFeaturePanelMixin` → `AudioPanelMixin` → `ExportPanelMixin` → `LayoutMixin` → `QMainWindow`。
+
+`LayoutMixin` 放在最后，因此它定义的 `resizeEvent` / `closeEvent` 不会被其他 mixin 覆盖。
+
+其中 `processing.py` 与 `data_access.py` 不依赖 Qt 之外的界面层，可独立测试。
+
+## 开发文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/开发需求与规范.txt](docs/开发需求与规范.txt) | 需求规格说明 + 开发指南 |
+| [docs/开发日志.md](docs/开发日志.md) | 按日期记录的开发过程与决策 |
+| [docs/开发计划.md](docs/开发计划.md) | 开发计划与进度 |
+| [docs/特征算法详解.md](docs/特征算法详解.md) | 短时特征的计算公式、物理意义与函数代码 |
+| [docs/快速读取处理绘图策略总结.md](docs/快速读取处理绘图策略总结.md) | 快速读取、处理与绘图的整体策略 |
+| [README-DATA-Structure.md](README-DATA-Structure.md) | 数据文件命名与字段结构说明 |
+
+按日期归档的专题记录位于 `docs/`：
+
+- [2026-03-26-文件列表阈值筛选与分页.md](docs/2026-03-26-文件列表阈值筛选与分页.md)
+- [2026-03-31-音频播放与导出升级.md](docs/2026-03-31-音频播放与导出升级.md)
+- [2026-04-14-UI布局和颜色优化.md](docs/2026-04-14-UI布局和颜色优化.md)
+- [2026-04-15-初至时间标记.md](docs/2026-04-15-初至时间标记.md)
+- [2026-04-15-时频图开发.md](docs/2026-04-15-时频图开发.md)
+- [2026-04-16-坐标轴短刻度线方案分析.md](docs/2026-04-16-坐标轴短刻度线方案分析.md)
+
 ## 打包 EXE
+
+打包依赖（仅打包 exe 时需要）：
+
+| 库 | 版本 | 用途 |
+| --- | --- | --- |
+| pyinstaller | 6.9.0 | 将程序打包为单文件 exe |
+| Pillow | 11.1.0 | 将 `logo.png` 转换为 exe 图标（.ico） |
 
 安装打包依赖：
 

@@ -1,15 +1,29 @@
+"""Default values for every UI control.
+
+The UI reads its initial state from the single ``UI_DEFAULTS`` instance at the
+bottom of this module, so adding a control default only requires touching the
+matching dataclass here.
+"""
+
 from __future__ import annotations
+
 
 from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
 class FilePanelDefaults:
+    """Default values for the left-hand file panel controls.
+    """
+
     amplitude_threshold: float = 0.01
 
 
 @dataclass(frozen=True)
 class DisplayPanelDefaults:
+    """Default values for the display-filter, axis-range and t-f controls.
+    """
+
     filter_enabled: bool = True
     filter_mode_index: int = 1
     low_cut_hz: float = 10000.0
@@ -35,6 +49,12 @@ class DisplayPanelDefaults:
 
 @dataclass(frozen=True)
 class FeaturePanelDefaults:
+    """Default parameter values for every short-time feature page.
+
+    Window widths are stored in seconds here; the UI shows them in milliseconds and
+    converts before calling the processing layer.
+    """
+
     band1_low_hz: float = 4000.0
     band1_high_hz: float = 10000.0
     band2_low_hz: float = 20000.0
@@ -61,17 +81,26 @@ class FeaturePanelDefaults:
 
 @dataclass(frozen=True)
 class AudioPanelDefaults:
+    """Default values for the audio playback controls.
+    """
+
     downsample_factor: int = 10
 
 
 @dataclass(frozen=True)
 class ViewDefaults:
+    """Default interaction mode and visible-window duration.
+    """
+
     zoom_mode_checked: bool = True
     visible_window_seconds: float = 1.0
 
 
 @dataclass(frozen=True)
 class UIPanelDefaults:
+    """Aggregate of every control-panel default group.
+    """
+
     file: FilePanelDefaults = field(default_factory=FilePanelDefaults)
     display: DisplayPanelDefaults = field(default_factory=DisplayPanelDefaults)
     feature: FeaturePanelDefaults = field(default_factory=FeaturePanelDefaults)

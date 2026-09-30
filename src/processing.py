@@ -1,4 +1,12 @@
+"""Numerical core: filtering, PSD, spectrogram, audio and short-time features.
+
+Every function here is pure with respect to the GUI: it takes arrays plus
+explicit parameters and returns arrays, which keeps the algorithms testable and
+portable independently of the Qt layer.
+"""
+
 from __future__ import annotations
+
 
 import os
 import json
@@ -26,9 +34,19 @@ def validate_filter(
     low_cut_hz: float,
     high_cut_hz: float,
 ) -> tuple[bool, Optional[str]]:
+    """Validate display-filter parameters against the sample rate.
+
+    Checks the mode-specific cutoffs and the Nyquist limit.
+
+    Returns:
+        ``(is_valid, error_message_or_None)``.
+    """
+
     if not enabled:
         return True, None
 
+    # A cutoff at or above Nyquist makes the filter design fail, so it is
+    # rejected up front with a message the UI can show the user.
     nyquist = sample_rate / 2.0
     if mode == FilterMode.BANDPASS:
         if low_cut_hz <= 0 or high_cut_hz <= 0:
@@ -56,6 +74,13 @@ def _build_filter_sos(
     low_cut_hz: float,
     high_cut_hz: float,
 ) -> np.ndarray:
+    """Design the 4th-order Butterworth second-order-sections coefficients.
+
+    Returned in SOS form so filtering can use ``sosfiltfilt`` for zero-phase
+    forward-backward filtering, which avoids the phase distortion of a causal filter.
+    """
+
+    # scipy expects cutoffs normalised by Nyquist, not in Hz.
     nyquist = sample_rate / 2.0
     if mode == FilterMode.BANDPASS:
         return butter(
@@ -87,15 +112,29 @@ def apply_display_filter(
     low_cut_hz: float,
     high_cut_hz: float,
 ) -> np.ndarray:
+    """Filter the waveform for display only, zero-phase.
+
+    PSD and feature computation always use the unfiltered signal; this is used only
+    for what is drawn on screen. Returns the input unchanged when disabled.
+    """
+
     result = np.asarray(values, dtype=np.float64)
     if result.size == 0 or not enabled:
         return result
 
+    # sosfiltfilt runs the filter forwards and then backwards, which cancels the
+    # phase shift so the displayed waveform keeps its true arrival time.
     sos = _build_filter_sos(mode, sample_rate, low_cut_hz, high_cut_hz)
     return sosfiltfilt(sos, result)
 
 
 def compute_window_psd(values: np.ndarray, sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the Welch PSD of the given window, returned in dB.
+
+    Uses a Hann window with 50% overlap and linear detrend, at the display's full
+    resolution, and converts to dB with a tiny floor so ``log10(0)`` cannot occur.
+    """
+
     signal = np.asarray(values, dtype=np.float64)
     if signal.size < 2:
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
@@ -112,6 +151,8 @@ def compute_window_psd(values: np.ndarray, sample_rate: float) -> tuple[np.ndarr
         scaling="density",
         return_onesided=True,
     )
+    # Guard the log against an exactly-zero bin, which would otherwise produce
+    # -inf dB and flatten the whole curve against the axis floor.
     floor = np.finfo(np.float64).tiny
     psd_db = 10.0 * np.log10(np.maximum(psd, floor))
     return freqs, psd_db
@@ -125,6 +166,16 @@ def compute_time_frequency_map(
     overlap_ratio: float,
     spectrum_mode: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compute a short-time spectrogram for the t-f Plot tab.
+
+    Uses a Hann window with the requested overlap ratio; ``spectrum_mode`` selects
+    either PSD (``scaling="density"``) or a one-sided amplitude spectrum
+    (``scaling="spectrum"``).
+
+    Returns:
+        ``(frequencies_hz, times_s, matrix)`` where the frequency axis is linear in Hz.
+    """
+
     signal = np.asarray(values, dtype=np.float64).reshape(-1)
     if signal.size < 8 or sample_rate <= 0.0:
         return (
@@ -143,6 +194,7 @@ def compute_time_frequency_map(
         )
 
     overlap = min(max(float(overlap_ratio), 0.0), 0.95)
+    # noverlap must stay below nperseg, otherwise scipy raises.
     noverlap = min(window_samples - 1, max(0, int(round(window_samples * overlap))))
     mode = str(spectrum_mode).strip().lower()
     if mode == "psd":
@@ -191,6 +243,16 @@ def prepare_audio_waveform(
     *,
     target_peak: float = 0.95,
 ) -> tuple[np.ndarray, int]:
+    """Convert a waveform into 16-bit PCM suitable for playback.
+
+    Downsamples by ``downsample_factor``, removes the mean, normalises against the
+    99.5th-percentile amplitude to ``target_peak``, clips to [-1, 1] and quantises to
+    int16.
+
+    Returns:
+        ``(pcm_int16_array, output_sample_rate)``.
+    """
+
     signal = np.asarray(values, dtype=np.float64).reshape(-1)
     if signal.size == 0:
         raise ValueError("Audio source waveform is empty.")
@@ -198,11 +260,16 @@ def prepare_audio_waveform(
         raise ValueError("Sample rate must be greater than 0.")
 
     factor = max(1, int(downsample_factor))
+    # Remove DC first: a constant offset wastes a large part of the int16 range
+    # and is audible as a click when playback starts.
     centered = signal - float(np.mean(signal))
     if factor > 1:
         centered = scipy_signal.resample_poly(centered, up=1, down=factor)
 
     audio_sample_rate = max(1, int(round(sample_rate / factor)))
+    # Normalise against the 99.5th percentile rather than the absolute maximum so
+    # a single transient spike cannot drag the rest of the signal down to near
+    # silence.
     peak = float(np.percentile(np.abs(centered), 99.5)) if centered.size else 0.0
     if peak <= 0.0:
         peak = float(np.max(np.abs(centered))) if centered.size else 0.0
@@ -229,6 +296,22 @@ def compute_short_time_energy_ratio(
     amplitude_threshold: float,
     gate_values: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """ST Energy Ratio: log10 of the two-band energy density ratio.
+
+    Per window: a Hann window, ``rfft``, then the power in Band 1 and Band 2
+    divided by each band's width, and finally the dB ratio. Windows whose gated
+    peak amplitude is below ``amplitude_threshold`` output ``0.0``.
+
+    Note:
+        The 100 Hz high-pass used by this feature is applied by the *caller*
+        (``ShortTimeFeaturePanelMixin._rebuild_short_time_energy_ratio_plot``),
+        not here. This function windows and transforms the array it is given, so
+        pass an already-high-passed signal.
+
+    Returns:
+        ``(window_centre_sample_indices, ratio_db)``.
+    """
+
     signal = np.asarray(values, dtype=np.float64)
     gate_signal = signal if gate_values is None else np.asarray(gate_values, dtype=np.float64)
     if signal.size == 0 or sample_rate <= 0.0:
@@ -251,6 +334,9 @@ def compute_short_time_energy_ratio(
     if not np.any(numerator_mask) or not np.any(denominator_mask):
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
 
+    # Dividing by each band's width turns a total band energy into a density, so
+    # the ratio compares like with like instead of being biased towards the
+    # wider band.
     numerator_bandwidth = max(numerator_high_hz - numerator_low_hz, np.finfo(np.float64).eps)
     denominator_bandwidth = max(denominator_high_hz - denominator_low_hz, np.finfo(np.float64).eps)
     window = get_window('hann', window_samples, fftbins=True).astype(np.float64, copy=False)
@@ -262,10 +348,14 @@ def compute_short_time_energy_ratio(
         stop = int(start + window_samples)
         segment = signal[int(start):stop]
         gate_segment = gate_signal[int(start):stop]
+        # Feature points sit at the window centre, not at its start.
         centers[index] = start + (window_samples * 0.5)
         if segment.size < window_samples or gate_segment.size < window_samples:
             ratios_db[index] = 0.0
             continue
+        # The gate signal is usually the *unfiltered* waveform, so a window with
+        # no real signal energy is zeroed even when the display filter has
+        # stretched noise up to the threshold.
         if float(np.max(np.abs(gate_segment))) < amplitude_threshold:
             ratios_db[index] = 0.0
             continue
@@ -293,6 +383,15 @@ def compute_short_time_band_energy(
     amplitude_threshold: float,
     gate_values: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """ST Energy: time-domain energy of a band-passed window.
+
+    Band-passes the signal (``Band Low = 0`` degrades to a low-pass) and returns the
+    sum of squared samples per window, in linear units.
+
+    Returns:
+        ``(window_centre_sample_indices, energy)``.
+    """
+
     signal = np.asarray(values, dtype=np.float64)
     gate_signal = signal if gate_values is None else np.asarray(gate_values, dtype=np.float64)
     if signal.size == 0 or sample_rate <= 0.0:
@@ -307,6 +406,8 @@ def compute_short_time_band_energy(
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
 
     if band_low_hz > 0.0:
+        # A zero low cutoff means "from DC", so the filter degrades to a low-pass
+        # instead of failing on a zero Wn edge.
         sos = butter(
             N=4,
             Wn=[band_low_hz / nyquist, band_high_hz / nyquist],
@@ -358,6 +459,15 @@ def compute_short_time_energy_sum(
     hop_ratio: float,
     sample_rate: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """ST Energy Energy: second-stage sum of squares of an ST Energy curve.
+
+    Applies a sliding window over the first-stage feature curve and sums ``y[i]**2``,
+    producing a linear (not dB) curve.
+
+    Returns:
+        ``(stage2_centre_sample_indices, energy)``.
+    """
+
     centers = np.asarray(feature_centers, dtype=np.float64)
     values = np.asarray(feature_values, dtype=np.float64)
     if centers.size == 0 or values.size != centers.size or sample_rate <= 0.0:
@@ -400,6 +510,16 @@ def compute_short_time_max_num(
     max_threshold: float,
     sample_rate: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """ST-energy-max-num: count of sub-windows above a threshold.
+
+    Runs a second sliding window over the first-stage ST Energy curve, splits it into
+    fixed sub-windows, and counts how many sub-windows have a peak above
+    ``max_threshold``.
+
+    Returns:
+        ``(stage2_centre_sample_indices, count)``.
+    """
+
     centers = np.asarray(feature_centers, dtype=np.float64)
     values = np.asarray(feature_values, dtype=np.float64)
     if centers.size == 0 or values.size != centers.size or sample_rate <= 0.0:
@@ -450,6 +570,16 @@ def compute_short_time_psd_sum(
     band_low_hz: float,
     band_high_hz: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """ST PSD sum: in-band short-time PSD with the background subtracted.
+
+    Estimates a background PSD from the first ``background_seconds`` of the signal
+    using Welch, computes a short-time PSD with the same ``nperseg`` (so the
+    frequency grids match exactly), subtracts, and sums over the requested band.
+
+    Returns:
+        ``(window_centre_sample_indices, band_psd_sum)`` in rad^2/Hz.
+    """
+
     signal = np.asarray(values, dtype=np.float64)
     if signal.size < 2 or sample_rate <= 0.0:
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
@@ -511,6 +641,12 @@ def compute_short_time_psd_sum(
 
 @dataclass(frozen=True)
 class SlidingWindowSVMPredictor:
+    """Runs the sliding-window SVM prediction on an unfiltered waveform.
+
+    Features are computed on short windows of the original (unfiltered)
+    signal, which matches the training regime of the bundled model.
+    """
+
     model: Pipeline
     selected_features: tuple[str, ...]
     energy_bands: tuple[tuple[float, float], ...]
@@ -518,10 +654,16 @@ class SlidingWindowSVMPredictor:
 
 
 def _band_name(low_hz: float, high_hz: float) -> str:
+    """Return a readable ``"<lo>-<hi>Hz"`` label for a frequency band.
+    """
+
     return f"{int(low_hz / 1000)}k_{int(high_hz / 1000)}k"
 
 
 def _safe_float(value: float) -> float:
+    """Convert a value to ``float``, returning 0.0 on failure.
+    """
+
     result = float(value)
     if not np.isfinite(result):
         return 0.0
@@ -529,6 +671,9 @@ def _safe_float(value: float) -> float:
 
 
 def _fft_power(signal_data: np.ndarray, sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``|rfft(windowed_segment)|**2`` for one window.
+    """
+
     spectrum = np.fft.rfft(signal_data)
     freqs = np.fft.rfftfreq(signal_data.size, d=1.0 / sample_rate)
     power = np.abs(spectrum) ** 2
@@ -536,6 +681,9 @@ def _fft_power(signal_data: np.ndarray, sample_rate: float) -> tuple[np.ndarray,
 
 
 def _band_energy_from_spectrum(freqs: np.ndarray, power: np.ndarray, low_hz: float, high_hz: float) -> float:
+    """Sum the power spectrum over the bins inside a band.
+    """
+
     mask = (freqs >= low_hz) & (freqs < high_hz)
     if not np.any(mask):
         return 0.0
@@ -549,6 +697,9 @@ def _bandpass_filter(
     high_hz: float,
     order: int = 4,
 ) -> np.ndarray:
+    """Band-pass filter a signal, degrading to low-pass when low is 0.
+    """
+
     nyquist = 0.5 * sample_rate
     low = max(low_hz / nyquist, 1e-6)
     high = min(high_hz / nyquist, 0.999999)
@@ -564,6 +715,9 @@ def _highpass_filter(
     cutoff_hz: float,
     order: int = 4,
 ) -> np.ndarray:
+    """High-pass filter a signal with a 4th-order Butterworth.
+    """
+
     nyquist = 0.5 * sample_rate
     cutoff = max(cutoff_hz / nyquist, 1e-6)
     if not (0 < cutoff < 1):
@@ -573,12 +727,18 @@ def _highpass_filter(
 
 
 def _compute_chunk_size(window_samples: int, selected_feature_count: int) -> int:
+    """Return a chunk size that keeps memory bounded during feature extraction.
+    """
+
     target_bytes = 32 * 1024 * 1024
     per_window_bytes = max(window_samples * 8 * (1 + selected_feature_count // 8), window_samples * 16)
     return max(8, min(512, target_bytes // max(per_window_bytes, 1)))
 
 
 def _make_feature_store(window_count: int, feature_names: tuple[str, ...]) -> dict[str, np.ndarray]:
+    """Create a zero-filled array for accumulating feature values.
+    """
+
     return {
         feature_name: np.zeros(window_count, dtype=np.float64)
         for feature_name in feature_names
@@ -589,6 +749,9 @@ def _iter_window_chunks(
     window_view: np.ndarray,
     chunk_size: int,
 ):
+    """Yield ``(start, end)`` window chunks covering the whole signal.
+    """
+
     for chunk_start in range(0, window_view.shape[0], chunk_size):
         chunk_stop = min(window_view.shape[0], chunk_start + chunk_size)
         yield chunk_start, chunk_stop, np.asarray(window_view[chunk_start:chunk_stop], dtype=np.float64)
@@ -602,6 +765,12 @@ def _assign_energy_features(
     energy_bands: tuple[tuple[float, float], ...],
     energy_ratio_range: tuple[float, float],
 ) -> None:
+    """Fill per-window band-energy features for one chunk.
+
+    Also applies the amplitude gate, writing ``0.0`` into windows that fall below
+    the threshold.
+    """
+
     floor = np.finfo(np.float64).tiny
     ratio_range_label = _band_name(*energy_ratio_range)
     total_mask = (freqs >= energy_ratio_range[0]) & (freqs < energy_ratio_range[1])
@@ -631,6 +800,9 @@ def _assign_stat_features(
     sample_rate: float,
     band_label: str,
 ) -> None:
+    """Fill per-window statistical features for one chunk.
+    """
+
     centered = windows - windows.mean(axis=1, keepdims=True)
     zcr = np.count_nonzero(np.signbit(centered[:, 1:]) != np.signbit(centered[:, :-1]), axis=1)
     zcr = zcr.astype(np.float64) / max(windows.shape[1] - 1, 1)
@@ -674,6 +846,9 @@ def _compute_stat_band_feature_block(
     selected_features: tuple[str, ...],
     active_indices: np.ndarray,
 ) -> tuple[str, dict[str, np.ndarray]]:
+    """Compute one statistical band feature over a chunk of windows.
+    """
+
     band_label = _band_name(low_hz, high_hz)
     feature_store = _make_feature_store(
         active_indices.size,
@@ -698,6 +873,12 @@ def _compute_stat_band_feature_block(
 
 @lru_cache(maxsize=4)
 def load_sliding_window_svm_predictor(model_directory: str) -> SlidingWindowSVMPredictor:
+    """Load and memoise the sklearn SVM Pipeline from ``model_directory``.
+
+    The model file is ``svm_model.joblib``; ``lru_cache`` keeps repeated plot
+    rebuilds from re-reading it from disk.
+    """
+
     model_dir = Path(model_directory)
     metadata_path = model_dir / "svm_model_metadata.json"
     model_path = model_dir / "svm_model.joblib"
@@ -722,6 +903,16 @@ def compute_short_time_svm_predictions(
     gate_highpass_hz: float = 20000.0,
     gate_peak_threshold: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Run sliding-window SVM classification over the waveform.
+
+    Per window: 20 kHz high-pass gate (windows with peak amplitude <= 0.05 are
+    skipped and output 0), then the energy/statistical features named in the model
+    metadata, then the pipeline prediction.
+
+    Returns:
+        ``(window_centre_sample_indices, predictions)`` with 0/1 labels.
+    """
+
     signal = np.asarray(values, dtype=np.float64)
     if signal.size == 0 or sample_rate <= 0.0:
         return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
@@ -739,10 +930,15 @@ def compute_short_time_svm_predictions(
     predictions = np.zeros(starts.size, dtype=np.float64)
     chunk_size = _compute_chunk_size(window_samples, len(predictor.selected_features))
     ratio_range = (1000.0, 60000.0)
+    # sliding_window_view gives a strided view (no copy); the [::hop] step then
+    # picks out exactly the windows at the hop positions, so one strided view
+    # replaces an explicit list of window slices.
     raw_window_view = np.lib.stride_tricks.sliding_window_view(signal, window_samples)[::hop_samples]
     gate_signal = _highpass_filter(signal, sample_rate, gate_highpass_hz)
     gate_window_view = np.lib.stride_tricks.sliding_window_view(gate_signal, window_samples)[::hop_samples]
     gate_peak = np.max(np.abs(gate_window_view), axis=1)
+    # Only "active" windows are featurised and classified; the rest keep the 0
+    # label. On a long recording with sparse events this skips most of the work.
     active_indices = np.flatnonzero(gate_peak > gate_peak_threshold)
     if active_indices.size == 0:
         return centers, predictions
@@ -751,6 +947,8 @@ def compute_short_time_svm_predictions(
     feature_store = _make_feature_store(active_indices.size, predictor.selected_features)
     raw_freqs = np.fft.rfftfreq(window_samples, d=1.0 / sample_rate)
 
+    # Band-energy features are cheap and fully vectorised, so they are done over
+    # the whole active set in memory-bounded chunks.
     for chunk_start, chunk_stop, raw_windows in _iter_window_chunks(active_raw_window_view, chunk_size):
         chunk_slice = slice(chunk_start, chunk_stop)
         raw_spectrum = np.fft.rfft(raw_windows, axis=1)
@@ -764,6 +962,9 @@ def compute_short_time_svm_predictions(
             ratio_range,
         )
 
+    # The statistical features need one band-pass filter over the whole signal per
+    # band, so the bands are independent and are farmed out to a thread pool.
+    # Each band writes into its own store, which is merged in afterwards.
     max_workers = min(len(predictor.stat_bands), max(1, os.cpu_count() or 1))
     if max_workers <= 1:
         stat_results = [
@@ -803,6 +1004,8 @@ def compute_short_time_svm_predictions(
         for feature_name, values in stat_feature_store.items():
             feature_store[feature_name] = values
 
+    # Column order must match the order the model was trained on, so the frame is
+    # built from ``selected_features`` rather than from the store's own ordering.
     feature_frame = pd.DataFrame(
         {feature_name: feature_store[feature_name] for feature_name in predictor.selected_features}
     )

@@ -1,4 +1,7 @@
 # FIPread build dependencies (packaging only)
 # Install with:  pip install -r requirements-build.txt
-pyinstaller==6.9.0
-Pillow==11.1.0
+# Only needed for:  python build_exe.py
+#
+# <library>        <version>      <purpose>
+pyinstaller==6.9.0  # 将程序打包为单文件 exe
+Pillow==11.1.0      # 将 logo.png 转换为 exe 图标（.ico）

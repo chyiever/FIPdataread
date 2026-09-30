@@ -1,4 +1,12 @@
+"""File discovery, name parsing, reading and writing of waveform data.
+
+All file-name knowledge lives here: the start-time, sample-rate, arrival-time and
+sample-type tokens that FIPread understands, plus the readers for ``.npz``,
+``.tdms`` and ``.txt`` and the writers for the export formats.
+"""
+
 from __future__ import annotations
+
 
 import math
 import re
@@ -27,15 +35,24 @@ SUPPORTED_SUFFIXES = {".npz", ".tdms", ".txt"}
 
 
 def format_start_time_token(start_time: datetime) -> str:
+    """Format a datetime as a filename start-time token (YYYYMMDDTHHMMSS.mmm).
+    """
+
     return start_time.strftime("%Y%m%dT%H%M%S.%f")[:-3]
 
 
 def format_arrival_time_token(arrival_time: datetime) -> str:
     # Keep 0.1 ms precision (4 digits after decimal point).
+    """Format a datetime as an arrival-time token, or ``None`` if unset.
+    """
+
     return arrival_time.strftime("%Y%m%d%H%M%S.%f")[:-2]
 
 
 def format_sample_rate_token(sample_rate: float) -> str:
+    """Render a sample rate as a compact filename token such as ``200K``.
+    """
+
     rate_khz = float(sample_rate) / 1_000.0
     if abs(rate_khz - round(rate_khz)) < 1e-9:
         return f"{int(round(rate_khz))}K"
@@ -43,22 +60,41 @@ def format_sample_rate_token(sample_rate: float) -> str:
 
 
 def build_export_tdms_name(start_time: datetime, sample_rate: float) -> str:
+    """Build the default output file name for a TDMS export.
+    """
+
     return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.tdms"
 
 
 def build_export_npz_name(start_time: datetime, sample_rate: float) -> str:
+    """Build the default output file name for an NPZ export.
+    """
+
     return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.npz"
 
 
 def build_export_txt_name(start_time: datetime, sample_rate: float) -> str:
+    """Build the default output file name for a TXT export.
+    """
+
     return f"FIP-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.txt"
 
 
 def build_export_wav_name(start_time: datetime, sample_rate: float) -> str:
+    """Build the default output file name for a WAV export.
+    """
+
     return f"FIP-audio-{format_sample_rate_token(sample_rate)}-{format_start_time_token(start_time)}.wav"
 
 
 def _normalize_channel_export_data(phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray]) -> tuple[np.ndarray, ...]:
+    """Coerce the accepted channel containers into a tuple of arrays.
+
+    Accepts a single ndarray, a list/tuple of ndarrays, or an existing
+    ``LoadedWaveform.channels`` tuple, and always returns a tuple so callers do not
+    need to branch on the input type.
+    """
+
     if isinstance(phase_data, (tuple, list)):
         channels = tuple(np.asarray(channel, dtype=np.float64).reshape(-1) for channel in phase_data)
     else:
@@ -78,12 +114,23 @@ def _normalize_channel_export_data(phase_data: np.ndarray | tuple[np.ndarray, ..
 
 
 def _channels_to_export_array(channels: tuple[np.ndarray, ...]) -> np.ndarray:
+    """Return a 2-D array of shape (n_samples, n_channels).
+    """
+
     if len(channels) == 1:
         return channels[0]
     return np.column_stack(channels)
 
 
 def save_tdms_waveform(path: Path, phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray], sample_rate: float, start_time: datetime) -> Path:
+    """Write one or more channels to a TDMS file.
+
+    Every channel becomes its own TDMS channel (``phase_data``, ``phase_data_ch2``,
+    ...), and the shared metadata is written both as root-group properties and on
+    each channel so a reader that only looks at one level still finds the sample
+    rate and start time.
+    """
+
     try:
         from nptdms import ChannelObject, RootObject, TdmsWriter
     except ImportError as exc:
@@ -130,6 +177,14 @@ def save_npz_waveform(
     arrival_time: Optional[datetime] = None,
     sample_type: Optional[str] = None,
 ) -> Path:
+    """Write the waveform to an NPZ file.
+
+    Stores ``phase_data`` (all channels as a 2-D array when multi-channel), plus
+    ``sample_rate``, ``starttime``, ``npts``, ``comm_count``, ``timestamp``,
+    ``data_info``, and the optional ``arrival_time`` and ``type`` fields so a saved
+    file can be re-opened by the app with its metadata intact.
+    """
+
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     channels = _normalize_channel_export_data(phase_data)
@@ -169,6 +224,9 @@ def save_npz_waveform(
 
 
 def save_txt_waveform(path: Path, phase_data: np.ndarray | tuple[np.ndarray, ...] | list[np.ndarray]) -> Path:
+    """Write the current channel as a single-column text file.
+    """
+
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     channels = _normalize_channel_export_data(phase_data)
@@ -177,6 +235,9 @@ def save_txt_waveform(path: Path, phase_data: np.ndarray | tuple[np.ndarray, ...
 
 
 def save_wav_waveform(path: Path, phase_data: np.ndarray, sample_rate: float) -> Path:
+    """Write a waveform to a WAV file via scipy.io.wavfile.
+    """
+
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     values = np.asarray(phase_data, dtype=np.int16).reshape(-1)
@@ -185,11 +246,27 @@ def save_wav_waveform(path: Path, phase_data: np.ndarray, sample_rate: float) ->
 
 
 def parse_start_time_from_name(path: Path) -> datetime:
+    """Extract the waveform start time from a file name.
+
+    Recognises the legacy ``YYYYMMDDTHHMMSS.mmm`` token, the compact
+    ``YYYYMMDDHHMMSS.mmm`` token and the newer ``YYYY-M-D-H-M-S`` token.
+
+    Falls back to the file's modification time when no token matches, so a file is
+    never rejected purely because of its name.
+
+    Returns:
+        The parsed ``datetime``.
+    """
+
+    # Three name conventions are tried in turn, newest first, so a file produced
+    # by any of the historical naming schemes is still understood.
     match = TIME_TOKEN_RE.search(path.name)
     if match:
         value = match.group("stamp")
         if "." in value:
             main, frac = value.split(".", 1)
+            # strptime needs exactly 6 fractional digits, but the files carry
+            # milliseconds; pad or truncate to fit.
             frac = (frac + "000000")[:6]
             value = f"{main}.{frac}"
             return datetime.strptime(value, "%Y%m%dT%H%M%S.%f")
@@ -216,19 +293,48 @@ def parse_start_time_from_name(path: Path) -> datetime:
             second=int(date_match.group("second")),
         )
 
+    # Nothing recognisable in the name: fall back to the file's mtime, which is
+    # what the original single-file scripts did.
     return datetime.fromtimestamp(path.stat().st_mtime)
 
 
 def parse_sample_rate_from_name(path: Path) -> float:
+    """Extract the sample rate from a file-name token.
+
+    Accepts the legacy ``-200K-`` style and the newer ``-1MHz-`` / ``_1000k`` forms.
+
+    Returns:
+        The sample rate in Hz.
+
+    Raises:
+        ValueError: when no sample-rate token is present, because the rest of the
+            application has no other way to determine the rate.
+    """
+
     match = SAMPLE_RATE_TOKEN_RE.search(path.stem)
     if not match:
         raise ValueError(f"Cannot determine sample rate from file name: {path.name}")
     unit = match.group("unit").lower()
+    # Both "M" (megahertz) and "k" (kilohertz) forms exist in the wild; the
+    # sample rate is always normalised to Hz here.
     factor = 1_000_000.0 if unit.startswith("m") else 1_000.0
     return float(match.group("rate")) * factor
 
 
 def parse_arrival_time_token(value: object) -> Optional[datetime]:
+    """Parse a previously saved ``arrival_time`` value.
+
+    Accepts the file-name token form and a plain ISO-8601 string, since archives
+    written by different versions store it either way. Empty values and the
+    literal strings ``none``/``null``/``nan`` mean "not set" and return ``None``.
+
+    Returns:
+        The parsed ``datetime``, or ``None`` when no time is stored.
+
+    Raises:
+        ValueError: when the value is present but in an unsupported format.
+    """
+
     if value is None:
         return None
     if isinstance(value, bytes):
@@ -265,6 +371,12 @@ def parse_arrival_time_token(value: object) -> Optional[datetime]:
 
 
 def parse_optional_sample_type(value: object) -> Optional[str]:
+    """Normalise a stored sample-type code such as ``BK14``.
+
+    Returns:
+        The code upper-cased, or ``None`` when no usable value is stored.
+    """
+
     if value is None:
         return None
     if isinstance(value, bytes):
@@ -273,10 +385,21 @@ def parse_optional_sample_type(value: object) -> Optional[str]:
         text = str(value).strip()
     if not text or text.lower() in {"none", "null", "nan"}:
         return None
+    # Saved archives store the arrival time either as a file-name token or as a
+    # plain ISO string, so both are accepted here.
     return text.upper()
 
 
 def list_data_files(directory: Path, sort_field: SortField, ascending: bool) -> list[FileRecord]:
+    """List supported waveform files directly inside ``directory``.
+
+    Only the given directory is scanned (no recursion) and only recognised
+    suffixes are returned: ``.npz``, ``.tdms`` and ``.txt``.
+
+    Raises:
+        NotADirectoryError: when ``directory`` does not exist or is not a directory.
+    """
+
     if not directory.exists() or not directory.is_dir():
         raise NotADirectoryError(f"Invalid directory: {directory}")
 
@@ -295,13 +418,19 @@ def list_data_files(directory: Path, sort_field: SortField, ascending: bool) -> 
     if sort_field == SortField.NAME:
         files.sort(key=lambda item: item.name.lower(), reverse=reverse)
     else:
+        # Name is the tiebreaker so files sharing an mtime keep a stable order.
         files.sort(key=lambda item: (item.mtime, item.name.lower()), reverse=reverse)
     return files
 
 
 def paginate_files(records: list[FileRecord], page_index: int, page_size: int) -> PagedFiles:
+    """Slice ``items`` into the requested page and return a ``PagedFiles``.
+    """
+
     total_count = len(records)
     page_count = max(1, math.ceil(total_count / page_size)) if total_count else 1
+    # Clamp instead of raising: a stale page index from the caller (for example
+    # after a filter shrank the list) should land on the nearest valid page.
     bounded_page = min(max(page_index, 0), page_count - 1)
     start = bounded_page * page_size
     stop = start + page_size
@@ -314,10 +443,20 @@ def paginate_files(records: list[FileRecord], page_index: int, page_size: int) -
 
 
 def _read_scalar(data: np.lib.npyio.NpzFile, key: str, cast_type):
+    """Read a scalar from an NPZ archive, falling back to ``default``.
+    """
+
     return cast_type(np.asarray(data[key]).item())
 
 
 def _load_npz_waveform(path: Path) -> LoadedWaveform:
+    """Load an NPZ waveform file into a ``LoadedWaveform``.
+
+    ``data_info`` is optional: if it cannot be deserialised (for example because of a
+    NumPy version mismatch) the file still opens and the problem is reported through
+    ``data_info_warning`` instead of raising.
+    """
+
     data_info = None
     warnings: list[str] = []
     arrival_time: Optional[datetime] = None
@@ -325,6 +464,9 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
 
     with np.load(path, allow_pickle=True) as data:
         raw_phase_data = np.asarray(data["phase_data"], dtype=np.float64)
+        # Three on-disk layouts are supported: a 2-D phase_data (columns are
+        # channels), a separate "channels" array, and the original flat 1-D
+        # single-channel export.
         if raw_phase_data.ndim == 2:
             if raw_phase_data.shape[1] < 1:
                 raise ValueError(f"NPZ phase_data contains no channels: {path.name}")
@@ -350,6 +492,9 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
             except Exception as exc:
                 warnings.append(f"Failed to read channel_names: {exc}")
 
+        # A 0-d array means the value was saved as a scalar object; a non-0-d
+        # array means it was saved as a list. Both appear in archives written by
+        # earlier versions of this app.
         if "data_info" in data.files:
             try:
                 data_info_raw = data["data_info"]
@@ -407,6 +552,12 @@ def _load_npz_waveform(path: Path) -> LoadedWaveform:
 
 
 def _load_tdms_waveform(path: Path) -> LoadedWaveform:
+    """Load a TDMS file into a ``LoadedWaveform``.
+
+    All channels are retained; ``phase_data`` is channel 0. The start time and
+    sample rate come from the file name.
+    """
+
     try:
         from nptdms import TdmsFile
     except ImportError as exc:
@@ -415,6 +566,8 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
         ) from exc
 
     tdms_file = TdmsFile.read(path)
+    # The first group that actually contains channels is used, so files with
+    # extra metadata groups still open.
     selected_group = None
     selected_channels = []
     for group in tdms_file.groups():
@@ -461,7 +614,18 @@ def _load_tdms_waveform(path: Path) -> LoadedWaveform:
 
 
 def _read_txt_array(path: Path) -> np.ndarray:
+    """Read a text capture into a 1-D or 2-D float array.
+
+    Whitespace-separated data is tried first and comma-separated data second, so
+    both plain and CSV exports open. ``#`` comment lines are ignored.
+
+    Raises:
+        ValueError: when neither dialect parses, with both parse errors included.
+    """
+
     errors: list[str] = []
+    # Whitespace-separated first, then comma-separated: some scopes write CSV,
+    # so both dialects are attempted before giving up.
     for delimiter in (None, ","):
         try:
             return np.loadtxt(path, dtype=np.float64, comments="#", delimiter=delimiter, ndmin=2)
@@ -471,6 +635,9 @@ def _read_txt_array(path: Path) -> np.ndarray:
 
 
 def _load_txt_waveform(path: Path) -> LoadedWaveform:
+    """Load a TXT capture (1 or 2 columns) into a ``LoadedWaveform``.
+    """
+
     values = np.asarray(_read_txt_array(path), dtype=np.float64)
     if values.size == 0:
         raise ValueError(f"TXT file contains no numeric samples: {path.name}")
@@ -513,6 +680,9 @@ def _load_txt_waveform(path: Path) -> LoadedWaveform:
 
 
 def load_waveform(path: Path) -> LoadedWaveform:
+    """Dispatch to the loader matching the file suffix.
+    """
+
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".npz":
@@ -525,6 +695,13 @@ def load_waveform(path: Path) -> LoadedWaveform:
 
 
 def load_waveforms_concatenated(paths: Sequence[Path]) -> LoadedWaveform:
+    """Load several files and join them into one continuous waveform.
+
+    Files are sorted by their parsed start time and concatenated head-to-tail, per
+    channel. All files must share the same sample rate and channel count, otherwise a
+    ``ValueError`` explains the mismatch.
+    """
+
     selected_paths = [Path(path) for path in paths]
     if not selected_paths:
         raise ValueError("At least one file is required.")
@@ -535,6 +712,9 @@ def load_waveforms_concatenated(paths: Sequence[Path]) -> LoadedWaveform:
     sample_rate = float(waveforms[0].sample_rate)
     channel_count = waveforms[0].channel_count
     channel_names = waveforms[0].channel_names
+    # Concatenation is only meaningful when the files were recorded with the same
+    # instrument settings, so mismatches are rejected rather than silently
+    # producing a resampled or misaligned signal.
     for waveform in waveforms[1:]:
         if abs(float(waveform.sample_rate) - sample_rate) > max(1e-9, sample_rate * 1e-9):
             raise ValueError("Selected files must have the same sample rate before concatenation.")

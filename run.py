@@ -1,4 +1,10 @@
+"""Application entry point.
+
+Puts ``src`` on ``sys.path`` and starts the Qt event loop around ``MainWindow``.
+"""
+
 from __future__ import annotations
+
 
 import sys
 from pathlib import Path
@@ -14,6 +20,13 @@ from main_window import MainWindow
 
 
 def main() -> int:
+    """Entry point: configure high-DPI Qt, build MainWindow and run the app.
+
+    Enables high-DPI scaling before the QApplication is created so that point-based
+    fonts and widget geometry are scaled by the same device-pixel ratio, which keeps
+    button labels from being clipped on high-scaling displays.
+    """
+
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
     QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(

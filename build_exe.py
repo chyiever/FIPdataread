@@ -32,10 +32,13 @@ ICON_SOURCE = PROJECT_ROOT / "logo.png"
 
 
 def default_app_name() -> str:
+    """Return today's default executable base name, ``FIP.YYYY.MM.DD``.
+    """
     return datetime.now().strftime("FIP.%Y.%m.%d")
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the command-line switches."""
     parser = argparse.ArgumentParser(
         description="Use PyInstaller to package FIPread into a standalone exe."
     )
@@ -105,6 +108,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_project_path(path: Path, label: str) -> Path:
+    """Resolve a path and refuse to return it unless it lies inside the project.
+
+    This is the guard that keeps ``--workpath``/``--distpath`` from being pointed at
+    an arbitrary directory that ``clean_intermediate`` would then delete.
+    """
     resolved = path.resolve()
     project_root = PROJECT_ROOT.resolve()
     if resolved == project_root or project_root not in resolved.parents:
@@ -113,6 +121,8 @@ def ensure_project_path(path: Path, label: str) -> Path:
 
 
 def remove_path(path: Path) -> None:
+    """Delete a file or directory tree, printing what was removed.
+    """
     if not path.exists():
         return
     if path.is_dir():
@@ -124,11 +134,17 @@ def remove_path(path: Path) -> None:
 
 
 def clean_intermediate(work_root: Path) -> None:
+    """Remove the PyInstaller intermediate build directory.
+
+    Only the work path is deleted; existing ``dist/*.exe`` files are always preserved.
+    """
     safe_work_root = ensure_project_path(work_root, "workpath")
     remove_path(safe_work_root)
 
 
 def ensure_entry_script() -> None:
+    """Fail early if ``run.py`` or ``src`` is missing.
+    """
     if not ENTRY_SCRIPT.exists():
         raise FileNotFoundError(f"Entry script not found: {ENTRY_SCRIPT}")
     if not SRC_DIR.exists():
@@ -136,6 +152,8 @@ def ensure_entry_script() -> None:
 
 
 def ensure_pyinstaller() -> None:
+    """Fail with install instructions if PyInstaller is not importable.
+    """
     try:
         import PyInstaller  # noqa: F401
     except ImportError as exc:
@@ -146,11 +164,21 @@ def ensure_pyinstaller() -> None:
 
 
 def add_data_arg(source: Path, destination: str) -> str:
+    """Format one ``--add-data`` argument.
+
+    PyInstaller uses ``:`` as the separator on POSIX and ``;`` on Windows, so the
+    platform separator cannot be hard-coded.
+    """
     separator = ";" if os.name == "nt" else ":"
     return f"{source}{separator}{destination}"
 
 
 def collect_data_files() -> List[str]:
+    """Return the ``--add-data`` arguments for the packaged resources.
+
+    The saved SVM models are required (a missing model means the packaged app
+    cannot predict at all); ``logo.png`` is optional and only produces a warning.
+    """
     data_args: List[str] = []
     candidates = [
         (PROJECT_ROOT / "models" / "saved_models", "models/saved_models", True),
@@ -167,6 +195,11 @@ def collect_data_files() -> List[str]:
 
 
 def prepare_icon_file(work_root: Path, no_icon: bool) -> Path | None:
+    """Convert ``logo.png`` into a multi-resolution temporary ``.ico``.
+
+    Returns ``None`` when the icon was disabled, the source is missing, or Pillow is
+    not installed, so a packaging run can proceed without an icon.
+    """
     if no_icon:
         return None
     if not ICON_SOURCE.exists():
@@ -191,13 +224,25 @@ def prepare_icon_file(work_root: Path, no_icon: bool) -> Path | None:
 
 
 def build_hidden_imports() -> List[str]:
+    """Return the PyInstaller hidden-import list."""
     return [
+        "audio_panel",
         "config",
+        "constants",
         "data_access",
+        "export_panel",
+        "file_panel",
+        "layout",
         "main_window",
         "models",
+        "plot_panel",
         "plotting",
         "processing",
+        "resources",
+        "short_time_feature_panel",
+        "time_frequency_panel",
+        "ui_builder",
+        "widgets",
         "PyQt5.QtMultimedia",
         "joblib",
         "matplotlib",
@@ -222,6 +267,11 @@ def build_hidden_imports() -> List[str]:
 
 
 def build_excluded_modules() -> List[str]:
+    """Return the modules PyInstaller should not bundle.
+
+    These are Qt bindings the project does not use plus heavy unrelated
+    scientific stack packages, which keeps the one-file exe substantially smaller.
+    """
     return [
         "PyQt6",
         "PyQt6.QtCore",
@@ -248,6 +298,8 @@ def build_excluded_modules() -> List[str]:
 
 
 def build_pyinstaller_command(args: argparse.Namespace, work_root: Path) -> List[str]:
+    """Assemble the full PyInstaller command line for this build.
+    """
     pyinstaller_dist = work_root / "dist"
     pyinstaller_work = work_root / "work"
     pyinstaller_spec = work_root / "spec"
@@ -293,12 +345,19 @@ def build_pyinstaller_command(args: argparse.Namespace, work_root: Path) -> List
 
 
 def run_command(command: Sequence[str]) -> None:
+    """Print and run the command, raising if it fails.
+    """
     print("[build] Running command:")
     print(f"        {subprocess.list2cmdline(list(command))}")
     subprocess.run(command, cwd=str(PROJECT_ROOT), check=True)
 
 
 def unique_output_path(app_name: str, distpath: Path, overwrite: bool) -> Path:
+    """Return the final exe path, adding a time suffix if the name is taken.
+
+    Existing executables are never silently overwritten unless ``--overwrite``
+    was passed, so dated builds accumulate instead of destroying history.
+    """
     target = distpath / f"{app_name}.exe"
     if overwrite or not target.exists():
         return target
@@ -315,6 +374,8 @@ def unique_output_path(app_name: str, distpath: Path, overwrite: bool) -> Path:
 
 
 def move_final_exe(app_name: str, distpath: Path, work_root: Path, overwrite: bool) -> Path:
+    """Move the freshly built exe out of the intermediate dir into ``dist``.
+    """
     built_exe = work_root / "dist" / f"{app_name}.exe"
     if not built_exe.exists():
         raise FileNotFoundError(f"Packaging finished but exe was not found: {built_exe}")
@@ -329,6 +390,8 @@ def move_final_exe(app_name: str, distpath: Path, work_root: Path, overwrite: bo
 
 
 def print_summary(exe_path: Path, cleaned: bool) -> None:
+    """Print the final exe path, its size, and whether the intermediates were cleaned.
+    """
     size_mb = exe_path.stat().st_size / (1024 * 1024)
     print()
     print("[done] Packaging completed.")
@@ -338,6 +401,7 @@ def print_summary(exe_path: Path, cleaned: bool) -> None:
 
 
 def main() -> int:
+    """Parse arguments and run the packaging flow."""
     args = parse_args()
     if os.name != "nt":
         print("[warn] This script is intended for Windows packaging. Current platform is not Windows.")

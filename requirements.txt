@@ -1,11 +1,15 @@
 # FIPread runtime dependencies
 # Install with:  pip install -r requirements.txt
-numpy==1.26.4
-scipy==1.13.1
-PyQt5==5.15.10
-pyqtgraph==0.13.7
-nptdms==1.10.0
-pandas==2.0.3
-joblib==1.4.2
-scikit-learn==1.6.1
-matplotlib==3.9.2
+# Used by:  python run.py  and  the packaged exe
+# Pinned versions verified in conda env "LZdataread39" (Python 3.9.19, Windows).
+#
+# <library>        <version>      <purpose>
+numpy==1.26.4      # 数组运算与波形数据处理
+scipy==1.13.1      # 滤波、welch PSD、统计量、wav 读写
+PyQt5==5.15.10     # GUI 界面框架
+pyqtgraph==0.13.7  # 波形与 t-f 图绘制
+nptdms==1.10.0     # TDMS 文件读写
+pandas==2.0.3      # 数据处理与特征统计
+joblib==1.4.2      # SVM 模型加载
+scikit-learn==1.6.1  # SVM 预测 Pipeline
+matplotlib==3.9.2  # t-f 图颜色映射（colormap）
